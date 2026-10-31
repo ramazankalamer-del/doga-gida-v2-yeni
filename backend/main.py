@@ -44,6 +44,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY, amount_cents INTEGER NOT NULL, date TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS seed_version(version INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id), product_id INTEGER NOT NULL REFERENCES products(id), name TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, price_cents INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS order_cancellations(order_id INTEGER PRIMARY KEY REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
         ''')
         columns = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
         if 'request_id' not in columns:
@@ -51,6 +52,11 @@ def initialize():
         if 'created_by' not in columns:
             db.execute('ALTER TABLE orders ADD COLUMN created_by INTEGER')
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS orders_request_id ON orders(request_id)')
+        collection_columns = {row['name'] for row in db.execute('PRAGMA table_info(collections)')}
+        for name, definition in [('customer_id','INTEGER REFERENCES customers(id)'), ('request_id','TEXT'), ('created_by','INTEGER REFERENCES users(id)'), ('method','TEXT'), ('note',"TEXT NOT NULL DEFAULT ''"), ('created_at','TEXT')]:
+            if name not in collection_columns:
+                db.execute(f'ALTER TABLE collections ADD COLUMN {name} {definition}')
+        db.execute('CREATE UNIQUE INDEX IF NOT EXISTS collections_request_id ON collections(request_id)')
         if not db.execute('SELECT 1 FROM seed_version WHERE version=1').fetchone():
             db.executemany('INSERT INTO customers(name,contact,phone,district) VALUES(?,?,?,?)', [
                 ('Örnek Bahar Market','Demo Yetkili 1','','Kadıköy'),('Örnek Deniz Gıda','Demo Yetkili 2','','Üsküdar'),('Örnek Yeşil Bakkal','Demo Yetkili 3','','Ataşehir'),('Örnek Gün Market','Demo Yetkili 4','','Maltepe')])
@@ -261,6 +267,9 @@ def order_dict(db, order_id):
     result = dict(row)
     result['amount'] = result.pop('amount_cents') / 100
     result['items'] = [dict(line) for line in db.execute('SELECT product_id,name,sku,quantity,price_cents FROM order_items WHERE order_id=? ORDER BY product_id',(order_id,))]
+    cancellation = db.execute('SELECT reason,cancelled_at FROM order_cancellations WHERE order_id=?',(order_id,)).fetchone()
+    result['cancellation'] = dict(cancellation) if cancellation else None
+    result['can_cancel'] = result['status']=='Bekliyor' and bool(result['items']) and not cancellation
     return result
 
 @app.get('/api/orders')
@@ -298,10 +307,95 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
             db.execute('INSERT INTO order_items(order_id,product_id,name,sku,quantity,price_cents) VALUES(?,?,?,?,?,?)',(cursor.lastrowid,line.product_id,product['name'],product['sku'],line.quantity,product['price_cents']))
         return order_dict(db,cursor.lastrowid)
 
+class CancellationInput(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator('reason', mode='before')
+    @classmethod
+    def trim(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+@app.post('/api/orders/{order_id}/cancel')
+def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        actor = db.execute('SELECT role,active FROM users WHERE id=?',(user['id'],)).fetchone()
+        if not actor or not actor['active'] or actor['role'] not in ('admin','staff'):
+            raise HTTPException(403, 'Bu işlem için yetkiniz yok.')
+        order = db.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
+        if not order:
+            raise HTTPException(404, 'Sipariş bulunamadı.')
+        previous = db.execute('SELECT 1 FROM order_cancellations WHERE order_id=?',(order_id,)).fetchone()
+        if previous and order['status']=='İptal edildi':
+            return order_dict(db,order_id)
+        if order['status']!='Bekliyor' or previous:
+            raise HTTPException(409, 'Yalnızca bekleyen siparişler iptal edilebilir.')
+        lines = db.execute('SELECT product_id,quantity FROM order_items WHERE order_id=?',(order_id,)).fetchall()
+        if not lines:
+            raise HTTPException(409, 'Ürün detayı olmayan eski örnek siparişler iptal edilemez.')
+        for line in lines:
+            product = db.execute('SELECT stock FROM products WHERE id=?',(line['product_id'],)).fetchone()
+            if not product or product['stock']+line['quantity']>10000000:
+                raise HTTPException(409, 'Stok iadesi yapılamadı. Ürün kayıtlarını kontrol edin.')
+        for line in lines:
+            db.execute('UPDATE products SET stock=stock+? WHERE id=?',(line['quantity'],line['product_id']))
+        db.execute("UPDATE orders SET status='İptal edildi' WHERE id=?",(order_id,))
+        db.execute('INSERT INTO order_cancellations VALUES(?,?,?,?)',(order_id,user['id'],item.reason,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return order_dict(db,order_id)
+
+class CollectionInput(BaseModel):
+    customer_id: int = Field(gt=0, strict=True)
+    amount: Decimal = Field(gt=0, le=10000000, decimal_places=2)
+    method: Literal['cash','transfer','card']
+    note: str = Field(default='', max_length=300)
+    request_id: UUID
+
+    @field_validator('note', mode='before')
+    @classmethod
+    def trim(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+def collection_dict(db, collection_id):
+    return dict(db.execute('SELECT t.id,t.customer_id,c.name customer,t.amount_cents,t.date,t.method,t.note FROM collections t LEFT JOIN customers c ON c.id=t.customer_id WHERE t.id=?',(collection_id,)).fetchone())
+
+@app.get('/api/collections')
+def list_collections(user=Depends(auth.current_user)):
+    with database() as db:
+        return [collection_dict(db,row['id']) for row in db.execute('SELECT id FROM collections ORDER BY id DESC')]
+
+@app.get('/api/customer-balances')
+def customer_balances(user=Depends(auth.current_user)):
+    with database() as db:
+        return [dict(row) for row in db.execute('''
+          SELECT c.id,c.name,COALESCE(o.total,0) sales_cents,COALESCE(t.total,0) collected_cents,
+                 COALESCE(o.total,0)-COALESCE(t.total,0) balance_cents
+          FROM customers c
+          LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM orders WHERE status!='İptal edildi' GROUP BY customer_id) o ON o.customer_id=c.id
+          LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM collections WHERE customer_id IS NOT NULL GROUP BY customer_id) t ON t.customer_id=c.id
+          ORDER BY c.id DESC''')]
+
+@app.post('/api/collections', status_code=201)
+def add_collection(item: CollectionInput, user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        actor = db.execute('SELECT role,active FROM users WHERE id=?',(user['id'],)).fetchone()
+        if not actor or not actor['active'] or actor['role'] not in ('admin','staff'):
+            raise HTTPException(403, 'Bu işlem için yetkiniz yok.')
+        amount_cents = int(item.amount*100)
+        previous = db.execute('SELECT * FROM collections WHERE request_id=?',(str(item.request_id),)).fetchone()
+        if previous:
+            if previous['created_by']!=user['id'] or previous['customer_id']!=item.customer_id or previous['amount_cents']!=amount_cents or previous['method']!=item.method or previous['note']!=item.note:
+                raise HTTPException(409, 'Bu tahsilat isteği daha önce farklı bilgilerle kullanılmış.')
+            return collection_dict(db,previous['id'])
+        if not db.execute('SELECT 1 FROM customers WHERE id=?',(item.customer_id,)).fetchone():
+            raise HTTPException(404, 'Müşteri bulunamadı.')
+        cursor = db.execute('INSERT INTO collections(customer_id,amount_cents,date,method,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)',(item.customer_id,amount_cents,today(),item.method,item.note,str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return collection_dict(db,cursor.lastrowid)
+
 @app.get('/api/dashboard')
 def dashboard(user=Depends(auth.current_user)):
     with database() as db:
-        sales = db.execute('SELECT COALESCE(SUM(amount_cents),0),COUNT(*) FROM orders WHERE date=?',(today(),)).fetchone()
+        sales = db.execute("SELECT COALESCE(SUM(amount_cents),0),COUNT(*) FROM orders WHERE date=? AND status!='İptal edildi'",(today(),)).fetchone()
         collected = db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM collections WHERE date=?',(today(),)).fetchone()[0]
         return {'date':today(),'sales':sales[0]/100,'orders':sales[1],'collections':collected/100,'customers':db.execute('SELECT COUNT(*) FROM customers').fetchone()[0], 'stock':db.execute('SELECT COALESCE(SUM(stock),0) FROM products').fetchone()[0], 'low_stock':[product_dict(row) for row in db.execute('SELECT * FROM products WHERE stock<=min_stock')], 'recent_orders':[dict(row) for row in db.execute('SELECT o.id,c.name customer,o.amount_cents/100.0 amount,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 5')]}
 
