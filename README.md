@@ -157,7 +157,7 @@ Stok yetmezse, müşteri/ürün yoksa veya herhangi bir satır geçersizse sipar
 
 Mevcut sipariş kayıtları korunur; eski örnek siparişlere geriye dönük stok düşümü yapılmaz. Eski kayıtlarda ürün detayı olmadığı belirtilir. Şema geçişi eksik sütunları ve ürün satırları tablosunu ekler; müşteri ve ürün kayıtlarını silmez. Mevcut SQLite veritabanını kullanmaya devam edebilirsiniz.
 
-Bu aşamada ürün bazında kısmi iade, sipariş düzenleme, iskonto, KDV ayrıştırma ve tahsilat eklenmedi. Bekleyen siparişlerin tamamı aşağıdaki iptal akışıyla geri alınabilir. Gösterilen tutar mevcut ürün fiyatlarının toplamıdır; fatura düzenlenmez.
+Bu aşamada ürün bazında kısmi iade, sipariş düzenleme, iskonto ve KDV ayrıştırma eklenmedi. Bekleyen siparişlerin tamamı aşağıdaki iptal akışıyla geri alınabilir. Gösterilen tutar mevcut ürün fiyatlarının toplamıdır; fatura düzenlenmez.
 
 ## Bekleyen sipariş iptali ve stok iadesi
 
@@ -177,13 +177,13 @@ Kısmi iade, teslim edilmiş ürün iadesi, iptali geri alma ve tahsilat iadesi 
 
 Tutar 0,01–10.000.000 TL arasında, en fazla iki ondalık basamakla kabul edilir ve kuruş cinsinden tam sayı olarak saklanır. Tarih sunucuda bugünün İstanbul tarihi olarak atanır; ayrıca zaman ve işlemi yapan kullanıcı kaydedilir. Aynı istek kimliğiyle aynı tahsilat tekrar gönderilirse önceki kayıt döner; ikinci kayıt oluşmaz. Aynı kimlikle farklı müşteri/tutar/yöntem/açıklama reddedilir. Kontroller ve kayıt SQLite yazma kilidi altında yapılır; kullanıcının aktifliği ve rolü yeniden kontrol edilir.
 
-**Müşteri bakiyesi = müşterinin tüm iptal edilmemiş siparişleri − müşteriye bağlı tüm tahsilatları.** Tarih filtresi uygulanmaz; günlük panelde ise yalnızca o günün toplamı gösterilir. Pozitif bakiye müşterinin borcu, negatif bakiye müşterinin alacağı, sıfır ise kapalı hesap olarak gösterilir. Avans/fazla tahsilat kaydedilebilir. Sipariş iptali tahsilat kaydını silmez veya para iadesi yapmaz; gerekirse müşteri alacağı oluşur.
+**Müşteri bakiyesi = müşterinin tüm iptal edilmemiş siparişleri − müşteriye bağlı iptal edilmemiş tahsilatları.** Tarih filtresi uygulanmaz; günlük panelde ise yalnızca o günün toplamı gösterilir. Pozitif bakiye müşterinin borcu, negatif bakiye müşterinin alacağı, sıfır ise kapalı hesap olarak gösterilir. Avans/fazla tahsilat kaydedilebilir. Sipariş iptali tahsilat kaydını silmez veya para iadesi yapmaz; gerekirse müşteri alacağı oluşur.
 
 Eski örnek tahsilatın müşteri bilgisi yoktur. Bu kayıt silinmez veya rastgele bir müşteriye atanmaz; listede müşterisiz eski kayıt olarak görünür. Kendi tarihindeki genel tahsilat toplamına dahildir, müşteri bakiyelerinden düşülmez. Bu nedenle tüm müşterilerin tahsilat toplamı ile eski müşterisiz kayıtları içeren genel toplam farklı olabilir. Ekranda bu durum açıklanır.
 
 Yeni müşteriler sıfır bakiyeyle başlar. Sipariş ve tahsilat toplamları ayrı ayrı hesaplanır; birden çok kayıt toplamların katlanmasına yol açmaz. Müşteriye göre filtre tahsilat listesini ve bakiye tablosunu birlikte süzer.
 
-Bu aşamada açılış bakiyesi, eski tahsilatları müşteriye eşleştirme, geriye dönük tarih, tahsilat düzeltme/iptal/iade, banka entegrasyonu veya muhasebe fişi eklenmedi. Güncelleme mevcut kayıtları koruyarak tahsilat tablosuna isteğe bağlı müşteri ve kayıt bilgisi sütunlarını ekler.
+Bu aşamada açılış bakiyesi, eski tahsilatları müşteriye eşleştirme, geriye dönük tarih, tahsilat düzenleme/para iadesi, banka entegrasyonu veya muhasebe fişi eklenmedi. Güncelleme mevcut kayıtları koruyarak tahsilat tablosuna isteğe bağlı müşteri ve kayıt bilgisi sütunlarını ekler.
 
 ## Müşteri ve ürün düzenleme
 
@@ -196,3 +196,15 @@ Her kayıt bir sürüm taşır. İki kullanıcı aynı kaydı açarsa ilk başar
 Ürün fiyatı/adı/kodu değişikliği eski sipariş satırlarında saklanan bilgileri değiştirmez; yeni sipariş güncel bilgileri kullanır. Müşteri kimliği değişmediği için sipariş ve tahsilat bağlantıları, kayıt sayıları ve bakiye tutarları korunur. Müşteri adı güncellenirse ilişkili listelerde güncel adı görünür.
 
 Şema geçişi mevcut müşteri ve ürün tablolarına varsayılanı sıfır olan sürüm sütunu ekler; mevcut satırları silmez veya yeniden oluşturmaz. API güncellemesi POST /api/customers/{id} ve POST /api/products/{id} uçlarında, bütün form alanları ve listeden alınan expected_version ile yapılır. Yazma kilidi altında güncel rol ve sürüm yeniden kontrol edilir.
+
+## Tahsilat iptali ve bakiye düzeltmesi
+
+**Tahsilat ve bakiyeler** ekranında müşteriyle ilişkili yeni tahsilatın **İptal et** düğmesi yalnızca yöneticilere görünür. Müşteri ve tutarı kontrol edin, 3–500 karakterlik nedeni girip **Tahsilat iptalini onayla** seçin. Onaydan önce Vazgeç/Kapat/Escape ile çıkılabilir. Personel tahsilat eklemeye devam edebilir, iptal yapamaz; salt okunur kullanıcılar kayıt ekleyemez veya iptal edemez.
+
+İptal gerçek para iadesi değildir. Kayıt silinmez; asıl tutar, tarih, yöntem ve açıklama korunur. Neden, İstanbul saat dilimindeki iptal zamanı ve işlemi yapan kullanıcı kimliği ayrı iptal kaydında saklanır. Listede İptal edildi durumu, neden ve üzeri çizili tutar görünür; yeniden iptal düğmesi gösterilmez.
+
+İptal edilmiş tahsilatlar müşteri tahsilat toplamından çıkarılır; bakiye buna göre yeniden hesaplanır. Avans/alacak bakiyesi de doğru yönde düzelir. Günlük panel tahsilatın kendi tarihindeki geçerli kayıtları toplar: bugünkü kayıt iptal edilirse bugünün toplamı azalır; geçmiş tarihli kayıt iptal edilirse bugünün toplamı değişmez. Siparişler, satış toplamı ve stok değişmez.
+
+İptal yazma kilidi altında ve güncel yönetici yetkisi yeniden kontrol edilerek yapılır. Tahsilat başına tek iptal kaydı vardır. Tekrarlanan/eşzamanlı istekler ilk iptali döndürür; bakiye ikinci kez değiştirilmez ve ilk neden/zaman korunur. Eski oluşturma isteğini tekrar göndermek iptal edilmiş tahsilatı tekrar etkinleştirmez.
+
+Müşteri veya oluşturma detayı olmayan eski örnek tahsilatlar bu aşamada iptale kapalıdır. Eski kayıtlar aynen korunur. Kısmi tahsilat iptali, iptali geri alma, tahsilat düzenleme ve banka/kart para iadesi bu aşamada yoktur. Yeni iptal tablosu mevcut verileri silmeden oluşturulur.

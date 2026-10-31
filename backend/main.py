@@ -45,6 +45,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS seed_version(version INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id), product_id INTEGER NOT NULL REFERENCES products(id), name TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, price_cents INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS order_cancellations(order_id INTEGER PRIMARY KEY REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS collection_cancellations(collection_id INTEGER PRIMARY KEY REFERENCES collections(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
         ''')
         columns = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
         if 'request_id' not in columns:
@@ -399,7 +400,12 @@ class CollectionInput(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 def collection_dict(db, collection_id):
-    return dict(db.execute('SELECT t.id,t.customer_id,c.name customer,t.amount_cents,t.date,t.method,t.note FROM collections t LEFT JOIN customers c ON c.id=t.customer_id WHERE t.id=?',(collection_id,)).fetchone())
+    result = dict(db.execute('SELECT t.id,t.customer_id,c.name customer,t.amount_cents,t.date,t.method,t.note FROM collections t LEFT JOIN customers c ON c.id=t.customer_id WHERE t.id=?',(collection_id,)).fetchone())
+    cancellation = db.execute('SELECT reason,cancelled_at FROM collection_cancellations WHERE collection_id=?',(collection_id,)).fetchone()
+    original = db.execute('SELECT request_id FROM collections WHERE id=?',(collection_id,)).fetchone()
+    result['cancellation'] = dict(cancellation) if cancellation else None
+    result['can_cancel'] = result['customer_id'] is not None and original['request_id'] is not None and not cancellation
+    return result
 
 @app.get('/api/collections')
 def list_collections(user=Depends(auth.current_user)):
@@ -414,7 +420,7 @@ def customer_balances(user=Depends(auth.current_user)):
                  COALESCE(o.total,0)-COALESCE(t.total,0) balance_cents
           FROM customers c
           LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM orders WHERE status!='İptal edildi' GROUP BY customer_id) o ON o.customer_id=c.id
-          LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM collections WHERE customer_id IS NOT NULL GROUP BY customer_id) t ON t.customer_id=c.id
+          LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM collections p WHERE customer_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=p.id) GROUP BY customer_id) t ON t.customer_id=c.id
           ORDER BY c.id DESC''')]
 
 @app.post('/api/collections', status_code=201)
@@ -435,11 +441,26 @@ def add_collection(item: CollectionInput, user=Depends(auth.writer)):
         cursor = db.execute('INSERT INTO collections(customer_id,amount_cents,date,method,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)',(item.customer_id,amount_cents,today(),item.method,item.note,str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
         return collection_dict(db,cursor.lastrowid)
 
+@app.post('/api/collections/{collection_id}/cancel')
+def cancel_collection(collection_id: int, item: CancellationInput, user=Depends(auth.administrator)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_admin(db,user['id'])
+        collection = db.execute('SELECT customer_id,request_id FROM collections WHERE id=?',(collection_id,)).fetchone()
+        if not collection:
+            raise HTTPException(404, 'Tahsilat bulunamadı.')
+        if db.execute('SELECT 1 FROM collection_cancellations WHERE collection_id=?',(collection_id,)).fetchone():
+            return collection_dict(db,collection_id)
+        if collection['customer_id'] is None or collection['request_id'] is None:
+            raise HTTPException(409, 'Müşteri veya kayıt detayı eksik eski tahsilatlar iptal edilemez.')
+        db.execute('INSERT INTO collection_cancellations VALUES(?,?,?,?)',(collection_id,user['id'],item.reason,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return collection_dict(db,collection_id)
+
 @app.get('/api/dashboard')
 def dashboard(user=Depends(auth.current_user)):
     with database() as db:
         sales = db.execute("SELECT COALESCE(SUM(amount_cents),0),COUNT(*) FROM orders WHERE date=? AND status!='İptal edildi'",(today(),)).fetchone()
-        collected = db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM collections WHERE date=?',(today(),)).fetchone()[0]
+        collected = db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM collections p WHERE date=? AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=p.id)',(today(),)).fetchone()[0]
         return {'date':today(),'sales':sales[0]/100,'orders':sales[1],'collections':collected/100,'customers':db.execute('SELECT COUNT(*) FROM customers').fetchone()[0], 'stock':db.execute('SELECT COALESCE(SUM(stock),0) FROM products').fetchone()[0], 'low_stock':[product_dict(row) for row in db.execute('SELECT * FROM products WHERE stock<=min_stock')], 'recent_orders':[dict(row) for row in db.execute('SELECT o.id,c.name customer,o.amount_cents/100.0 amount,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 5')]}
 
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
