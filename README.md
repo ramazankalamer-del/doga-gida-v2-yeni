@@ -5,6 +5,57 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 
 ## Özellikler
 
+### Müşteri GPS konumu
+
+Müşteri ekleme/düzenleme formunda isteğe bağlı enlem (-90–90) ve boylam
+(-180–180) alanları bulunur. İki alan birlikte doldurulur. **GPS bilgisini
+temizle** iki alanı boşaltır; silme veya değişiklik **Kaydet** ile uygulanır.
+Müşteri silinmez. Listedeki **Haritada aç** bağlantısı kayıtlı noktayı
+OpenStreetMap'te açar; koordinatlar dış servise ancak bağlantı seçilince gönderilir.
+**Konumumu al** düğmesi müşterinin yanındayken cihazın güncel konumunu
+tek sefer alır (tarayıcı izni gerekir). Koordinatları ve yaklaşık doğruluğu
+gösterir; kaydetmeden önce kontrol edilebilir. Konum aranırken Kaydet devre
+dışıdır. İzin reddi, desteklenmeyen tarayıcı, konum bulunamaması ve zaman aşımı
+durumlarında elle giriş mümkündür; mevcut GPS silinmez. Arka planda takip yoktur.
+Gerçek cihazın GPS doğruluğu donanım ve ortama bağlıdır.
+
+API JSON sayıları veya iki alan için birlikte `null` kabul eder. Geçersiz,
+eksik eş, boolean, NaN/sonsuz veya sınır dışı koordinatlar reddedilir.
+Güncellemede iki alan da gönderilmezse mevcut GPS korunur; eski istemciler
+diğer müşteri bilgilerini düzenlerken konumu yanlışlıkla silmez. Koordinatlar
+diğer müşteri alanlarıyla birlikte sürüm kontrolü, rol ve CSRF korumasına tabidir.
+Eski kayıtlar boş konumla korunur; geçiş öncesinde veritabanı yedeği alınır.
+
+### Merkez ve İade depoları
+
+**Depolar ve stok hareketleri** ekranı Merkez Depo ve İade Deposu stoklarını
+ürün bazında ayrı gösterir. Mevcut `products.stock` alanı Merkez Depo'nun
+satılabilir stoğudur; yeni `return_stock` alanı kontrol bekleyen iade stoğudur.
+Eski stoklar, kullanıcılar, siparişler ve hareketler korunur. Şema geçişinden
+önce mevcut veritabanının tutarlı yedeği veritabanının yanındaki `backups/`
+klasörüne alınır. Eski hareketler Merkez Depo'ya atanır; İade Deposu sıfırdan
+başlar ve sahte geçmiş oluşturulmaz. Yeniden başlatma stokları sıfırlamaz.
+
+- **Stok girişi ekle:** Merkez Depo'ya teslimat ekler.
+- **İade kabul et:** fiziksel ürünü yalnızca İade Deposu'na ekler. Sipariş,
+  tahsilat ve müşteri bakiyesi değişmez; bu işlem muhasebesel iade değildir.
+- **Depolar arası transfer:** İade → Merkez yönünde kontrol ve satışa uygunluk
+  onayı gerekir. Merkez → İade yönü ürünü kontrole ayırır.
+- Siparişler sadece Merkez stoğunu kullanır. Bekleyen siparişin iptali de
+  Merkez stoğunu geri ekler. Ürün düzenleme ekranındaki stok düzeltmesi
+  sadece Merkez'i değiştirir; İade stoğu korunur.
+
+Transferin iki bacağı tek SQLite işleminde kaydedilir; fiziksel toplam değişmez.
+Yetersiz kaynak veya depo başına 10.000.000 adet sınırı aşıldığında işlem
+tamamen reddedilir. İstek kimlikleri tekrar kaydı önler; değiştirilmiş bir
+istekle aynı kimlik kullanılırsa 409 döner. Yönetici ve personel yazabilir;
+salt okunur kullanıcı iki depoyu ve geçmişi görebilir. API, CSRF ve yazma
+kilidi altında güncel rol kontrolünü uygular.
+
+API: `GET /api/warehouses`, `POST /api/warehouse-returns`,
+`POST /api/warehouse-transfers`. Bu aşama seri/lot, son kullanma tarihi,
+hurdaya ayırma ve müşteri/siparişe bağlı mali iade içermez.
+
 - İstanbul saatine göre günlük satış, sipariş ve tahsilat özeti
 - Toplam müşteri, stok ve kritik stok göstergeleri
 - Sipariş oluşturma, ürün satırları, sunucuda tutar hesaplama ve otomatik stok düşümü

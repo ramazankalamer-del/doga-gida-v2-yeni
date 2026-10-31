@@ -23,7 +23,7 @@ test('panel, müşteri ve ürün ekleme; arama ve kalıcılık',async({page},inf
  await page.getByLabel('Ürün kodu').fill('E2E-'+info.project.name+'-'+Date.now());
  await page.getByLabel('Kategori',{exact:true}).fill('Bakliyat');
  await page.getByLabel('Birim fiyat').fill('42.75');
- await page.getByLabel('Stok (adet)').fill('25');
+ await page.getByLabel('Merkez Depo stoğu (adet)').fill('25');
  await page.getByRole('button',{name:'Kaydet',exact:true}).click();
  await expect(page.getByRole('status').filter({hasText:'Ürün başarıyla eklendi'})).toBeVisible();
  await page.getByRole('button',{name:'Tüm ürünleri görüntüle'}).click();
@@ -224,7 +224,7 @@ test('müşteri/ürün düzenleme ve eski stok formu koruması',async({page},inf
  await page.getByRole('button',{name:product.name+' düzenle',exact:true}).click();
  await expect(page.getByLabel('Birim fiyat')).toHaveValue('12.35');
  await page.getByLabel('Birim fiyat').fill('17.45');
- await page.getByLabel('Stok (adet)').fill('8');
+ await page.getByLabel('Merkez Depo stoğu (adet)').fill('8');
  await page.getByRole('button',{name:'Kaydet',exact:true}).click();
  await expect(page.getByRole('status').filter({hasText:'Ürün başarıyla güncellendi'})).toBeVisible();
  await page.getByRole('button',{name:product.name+' düzenle',exact:true}).click();
@@ -302,7 +302,7 @@ test('stok girişi, hareket kaynakları, filtre ve kalıcılık',async({page},in
  expect(response.status()).toBe(201);
  const product=await response.json();
  if(info.project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
- await page.getByRole('button',{name:'Stok hareketleri',exact:true}).click();
+ await page.getByRole('button',{name:'Depolar ve stok hareketleri',exact:true}).click();
  await page.getByLabel('Ürüne göre filtrele',{exact:true}).selectOption(String(product.id));
  await page.getByRole('button',{name:'Stok girişi ekle',exact:true}).click();
  await expect(page.getByLabel('Stok girişi ürünü',{exact:true})).toHaveValue(String(product.id));
@@ -320,7 +320,7 @@ test('stok girişi, hareket kaynakları, filtre ve kalıcılık',async({page},in
  expect((await page.request.post(`/api/products/${product.id}`,{headers,data:{...current,stock:4,expected_version:current.version}})).status()).toBe(200);
  await page.reload();
  if(info.project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
- await page.getByRole('button',{name:'Stok hareketleri',exact:true}).click();
+ await page.getByRole('button',{name:'Depolar ve stok hareketleri',exact:true}).click();
  await page.getByLabel('Ürüne göre filtrele',{exact:true}).selectOption(String(product.id));
  await expect(page.getByText('4 adet',{exact:true})).toBeVisible();
  await expect(page.getByText(note,{exact:true})).toBeVisible();
@@ -332,3 +332,4 @@ test('stok girişi, hareket kaynakları, filtre ve kalıcılık',async({page},in
  await expect(page.getByText(note,{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
 });
+

@@ -15,7 +15,7 @@ import auth
 import secrets
 import time
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DB_PATH = os.getenv('DATABASE_PATH', str(Path(__file__).with_name('data') / 'doga.db'))
 
@@ -34,7 +34,25 @@ def database():
     finally:
         conn.close()
 
+def backup_before_feature_migration():
+    path = Path(DB_PATH).resolve()
+    if not path.is_file():
+        return
+    with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as source:
+        columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
+        customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns):
+            return
+        folder = path.parent / 'backups'
+        folder.mkdir(exist_ok=True)
+        target = folder / f'before-update-{time.time_ns()}.db'
+        with sqlite3.connect(target) as dest:
+            source.backup(dest)
+            if dest.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise RuntimeError('Şema güncellemesi öncesi veritabanı yedeği doğrulanamadı.')
+
 def initialize():
+    backup_before_feature_migration()
     with database() as db:
         auth.initialize(db)
         db.executescript('''
@@ -64,6 +82,22 @@ def initialize():
         for table in ('customers','products'):
             if 'version' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
                 db.execute(f'ALTER TABLE {table} ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
+        customer_columns = {row['name'] for row in db.execute('PRAGMA table_info(customers)')}
+        for column in ('latitude', 'longitude'):
+            if column not in customer_columns:
+                db.execute(f'ALTER TABLE customers ADD COLUMN {column} REAL')
+        # Existing stock and history remain the sellable MERKEZ balance.
+        if 'return_stock' not in {row['name'] for row in db.execute('PRAGMA table_info(products)')}:
+            db.execute('ALTER TABLE products ADD COLUMN return_stock INTEGER NOT NULL DEFAULT 0 CHECK(return_stock BETWEEN 0 AND 10000000)')
+        db.execute('''CREATE TABLE IF NOT EXISTS warehouse_actions(
+            request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, product_id INTEGER NOT NULL REFERENCES products(id),
+            quantity INTEGER NOT NULL, source TEXT, target TEXT NOT NULL, note TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL)''')
+        movement_columns = {row['name'] for row in db.execute('PRAGMA table_info(stock_movements)')}
+        if 'warehouse' not in movement_columns:
+            db.execute("ALTER TABLE stock_movements ADD COLUMN warehouse TEXT NOT NULL DEFAULT 'MERKEZ'")
+        if 'action_id' not in movement_columns:
+            db.execute('ALTER TABLE stock_movements ADD COLUMN action_id TEXT REFERENCES warehouse_actions(request_id)')
         if not db.execute('SELECT 1 FROM seed_version WHERE version=1').fetchone():
             db.executemany('INSERT INTO customers(name,contact,phone,district) VALUES(?,?,?,?)', [
                 ('Örnek Bahar Market','Demo Yetkili 1','','Kadıköy'),('Örnek Deniz Gıda','Demo Yetkili 2','','Üsküdar'),('Örnek Yeşil Bakkal','Demo Yetkili 3','','Ataşehir'),('Örnek Gün Market','Demo Yetkili 4','','Maltepe')])
@@ -199,6 +233,16 @@ class CustomerInput(BaseModel):
     contact: str = Field(min_length=2, max_length=100)
     phone: str = Field(default='', max_length=25)
     district: str = Field(min_length=2, max_length=80)
+    latitude: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False, strict=True)
+    longitude: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False, strict=True)
+
+    @model_validator(mode='after')
+    def coordinate_pair(self):
+        if ('latitude' in self.model_fields_set) != ('longitude' in self.model_fields_set):
+            raise ValueError('Enlem ve boylam birlikte gönderilmeli.')
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError('Enlem ve boylam birlikte doldurulmalı veya temizlenmeli.')
+        return self
 
     @field_validator('*', mode='before')
     @classmethod
@@ -232,7 +276,9 @@ def customers(user=Depends(auth.current_user)):
 @app.post('/api/customers', status_code=201)
 def add_customer(item: CustomerInput, user=Depends(auth.writer)):
     with database() as db:
-        cursor = db.execute('INSERT INTO customers(name,contact,phone,district) VALUES(?,?,?,?)', (item.name,item.contact,item.phone,item.district))
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        cursor = db.execute('INSERT INTO customers(name,contact,phone,district,latitude,longitude) VALUES(?,?,?,?,?,?)', (item.name,item.contact,item.phone,item.district,item.latitude,item.longitude))
         return {'id':cursor.lastrowid, 'version':0, **item.model_dump()}
 
 class CustomerUpdate(CustomerInput):
@@ -248,12 +294,14 @@ def update_customer(customer_id: int, item: CustomerUpdate, user=Depends(auth.wr
     with database() as db:
         db.execute('BEGIN IMMEDIATE')
         require_active_writer(db,user['id'])
-        row = db.execute('SELECT version FROM customers WHERE id=?',(customer_id,)).fetchone()
+        row = db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'Müşteri bulunamadı.')
         if row['version']!=item.expected_version:
             raise HTTPException(409, 'Kayıt başka bir işlemde değişti. Güncel listeyi yükleyip yeniden deneyin.')
-        db.execute('UPDATE customers SET name=?,contact=?,phone=?,district=?,version=version+1 WHERE id=?',(item.name,item.contact,item.phone,item.district,customer_id))
+        latitude = item.latitude if 'latitude' in item.model_fields_set else row['latitude']
+        longitude = item.longitude if 'longitude' in item.model_fields_set else row['longitude']
+        db.execute('UPDATE customers SET name=?,contact=?,phone=?,district=?,latitude=?,longitude=?,version=version+1 WHERE id=?',(item.name,item.contact,item.phone,item.district,latitude,longitude,customer_id))
         return dict(db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
 
 def product_dict(row):
@@ -261,13 +309,13 @@ def product_dict(row):
     result['price'] = result.pop('price_cents') / 100
     return result
 
-def record_stock_movement(db, product, before, after, kind, user_id, order_id=None, request_id=None, note=''):
+def record_stock_movement(db, product, before, after, kind, user_id, order_id=None, request_id=None, note='', warehouse='MERKEZ', action_id=None):
     if before==after:
         return None
-    return db.execute('INSERT INTO stock_movements(product_id,name,sku,kind,quantity,before_stock,after_stock,user_id,order_id,request_id,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(product['id'],product['name'],product['sku'],kind,after-before,before,after,user_id,order_id,request_id,note,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat())).lastrowid
+    return db.execute('INSERT INTO stock_movements(product_id,name,sku,kind,quantity,before_stock,after_stock,user_id,order_id,request_id,note,created_at,warehouse,action_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(product['id'],product['name'],product['sku'],kind,after-before,before,after,user_id,order_id,request_id,note,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat(),warehouse,action_id)).lastrowid
 
 def movement_dict(db, movement_id):
-    return dict(db.execute('SELECT m.id,m.product_id,m.name,m.sku,m.kind,m.quantity,m.before_stock,m.after_stock,m.order_id,m.note,m.created_at,u.username FROM stock_movements m JOIN users u ON u.id=m.user_id WHERE m.id=?',(movement_id,)).fetchone())
+    return dict(db.execute('SELECT m.id,m.product_id,m.name,m.sku,m.kind,m.quantity,m.before_stock,m.after_stock,m.order_id,m.note,m.created_at,m.warehouse,m.action_id,u.username FROM stock_movements m JOIN users u ON u.id=m.user_id WHERE m.id=?',(movement_id,)).fetchone())
 
 @app.get('/api/products')
 def products(user=Depends(auth.current_user)):
@@ -326,7 +374,7 @@ def stock_ledger(user=Depends(auth.current_user)):
         db.execute('BEGIN')
         products = [dict(row) for row in db.execute('''SELECT p.id,p.name,p.sku,p.stock,t.opening_stock,t.tracked_since,COALESCE(m.delta,0) net_change
           FROM products p JOIN stock_tracking t ON t.product_id=p.id
-          LEFT JOIN (SELECT product_id,SUM(quantity) delta FROM stock_movements GROUP BY product_id) m ON m.product_id=p.id ORDER BY p.id DESC''')]
+          LEFT JOIN (SELECT product_id,SUM(quantity) delta FROM stock_movements WHERE warehouse='MERKEZ' GROUP BY product_id) m ON m.product_id=p.id ORDER BY p.id DESC''')]
         movements = [movement_dict(db,row['id']) for row in db.execute('SELECT id FROM stock_movements ORDER BY id DESC')]
         return {'products':products,'movements':movements}
 
@@ -348,6 +396,73 @@ def add_stock_receipt(item: StockReceiptInput, user=Depends(auth.writer)):
         db.execute('UPDATE products SET stock=stock+?,version=version+1 WHERE id=?',(item.quantity,item.product_id))
         movement_id = record_stock_movement(db,product,product['stock'],product['stock']+item.quantity,'receipt',user['id'],request_id=str(item.request_id),note=item.note)
         return movement_dict(db,movement_id)
+
+WAREHOUSES = {'MERKEZ': 'Merkez Depo', 'IADE': 'İade Deposu'}
+WAREHOUSE_COLUMNS = {'MERKEZ': 'stock', 'IADE': 'return_stock'}
+
+@app.get('/api/warehouses')
+def warehouses(user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN')
+        rows = [dict(row) for row in db.execute('SELECT id,name,sku,stock,return_stock FROM products ORDER BY id DESC')]
+        return {'warehouses': [{'code': code, 'name': name, 'sellable': code == 'MERKEZ',
+                               'stock': sum(row[WAREHOUSE_COLUMNS[code]] for row in rows)}
+                              for code, name in WAREHOUSES.items()], 'products': rows}
+
+class TransferInput(StockReceiptInput):
+    source: Literal['MERKEZ', 'IADE']
+    target: Literal['MERKEZ', 'IADE']
+    inspection_confirmed: bool = Field(default=False, strict=True)
+
+def warehouse_action_dict(db, request_id):
+    result = dict(db.execute('SELECT * FROM warehouse_actions WHERE request_id=?', (request_id,)).fetchone())
+    result['movements'] = [movement_dict(db, row['id']) for row in db.execute(
+        'SELECT id FROM stock_movements WHERE action_id=? ORDER BY id', (request_id,))]
+    return result
+
+def apply_warehouse_action(item, user, kind, source, target):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db, user['id'])
+        request_id = str(item.request_id)
+        previous = db.execute('SELECT * FROM warehouse_actions WHERE request_id=?', (request_id,)).fetchone()
+        if previous:
+            if (previous['kind'], previous['product_id'], previous['quantity'], previous['source'], previous['target'], previous['note'], previous['user_id']) != (kind, item.product_id, item.quantity, source, target, item.note, user['id']):
+                raise HTTPException(409, 'Bu depo işlem isteği daha önce farklı bilgilerle kullanılmış.')
+            return warehouse_action_dict(db, request_id)
+        if source == target:
+            raise HTTPException(422, 'Kaynak ve hedef depolar farklı olmalı.')
+        product = db.execute('SELECT * FROM products WHERE id=?', (item.product_id,)).fetchone()
+        if not product:
+            raise HTTPException(404, 'Ürün bulunamadı.')
+        source_column = WAREHOUSE_COLUMNS[source] if source else None
+        target_column = WAREHOUSE_COLUMNS[target]
+        if source and product[source_column] < item.quantity:
+            raise HTTPException(409, f'{WAREHOUSES[source]} stoğu yetersiz.')
+        if product[target_column] + item.quantity > 10000000:
+            raise HTTPException(409, 'Hedef depoda stok üst sınırı aşılıyor.')
+        db.execute('INSERT INTO warehouse_actions VALUES(?,?,?,?,?,?,?,?,?)',
+                   (request_id, kind, item.product_id, item.quantity, source, target, item.note, user['id'], datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        if source:
+            db.execute(f'UPDATE products SET {source_column}={source_column}-? WHERE id=?', (item.quantity, item.product_id))
+            record_stock_movement(db, product, product[source_column], product[source_column]-item.quantity,
+                                  'transfer_out', user['id'], note=item.note, warehouse=source, action_id=request_id)
+        db.execute(f'UPDATE products SET {target_column}={target_column}+?,version=version+1 WHERE id=?', (item.quantity, item.product_id))
+        record_stock_movement(db, product, product[target_column], product[target_column]+item.quantity,
+                              'return_accept' if kind == 'return' else 'transfer_in', user['id'],
+                              note=item.note, warehouse=target, action_id=request_id)
+        return warehouse_action_dict(db, request_id)
+
+@app.post('/api/warehouse-returns', status_code=201)
+def accept_return(item: StockReceiptInput, user=Depends(auth.writer)):
+    # Physical return receipt only; it does not change orders or customer balances.
+    return apply_warehouse_action(item, user, 'return', None, 'IADE')
+
+@app.post('/api/warehouse-transfers', status_code=201)
+def transfer_stock(item: TransferInput, user=Depends(auth.writer)):
+    if item.source == 'IADE' and item.target == 'MERKEZ' and not item.inspection_confirmed:
+        raise HTTPException(422, 'Merkez Depo’ya aktarım için ürün kontrolünü onaylayın.')
+    return apply_warehouse_action(item, user, 'transfer', item.source, item.target)
 
 class OrderLine(BaseModel):
     product_id: int = Field(gt=0, strict=True)

@@ -22,3 +22,8 @@ button.edit-action:focus-visible{outline-color:#a16207}
 .order-actions{display:flex;flex-direction:column;align-items:flex-start;gap:8px}.order-actions button{white-space:nowrap}
 
 .sidebar{overflow-y:auto}.stock-in{color:#23683e}.stock-out{color:#a43d2a}
+
+
+.warehouse-section{margin-bottom:32px}.warehouse-actions{display:flex;gap:10px;flex-wrap:wrap}.warehouse-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:18px 0}.warehouse-card{padding:24px}.warehouse-card h3{margin:16px 0 8px}.warehouse-card>strong{font-size:28px;color:#1b4b38}.warehouse-card p{color:#64746c}.inspection-check{display:flex;align-items:flex-start;gap:10px}.inspection-check input{width:auto;flex-shrink:0;margin-top:3px}@media(max-width:760px){.warehouse-cards{grid-template-columns:1fr}.warehouse-section>.panel-head{align-items:flex-start;flex-direction:column;gap:14px}}
+
+.gps-fields{border:1px solid #dbe4de;border-radius:12px;padding:16px;margin:18px 0}.gps-fields legend{font-weight:600;padding:0 6px}.gps-fields .order-help{margin:10px 0}.gps-fields button{margin-top:8px}
