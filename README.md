@@ -184,3 +184,15 @@ Eski örnek tahsilatın müşteri bilgisi yoktur. Bu kayıt silinmez veya rastge
 Yeni müşteriler sıfır bakiyeyle başlar. Sipariş ve tahsilat toplamları ayrı ayrı hesaplanır; birden çok kayıt toplamların katlanmasına yol açmaz. Müşteriye göre filtre tahsilat listesini ve bakiye tablosunu birlikte süzer.
 
 Bu aşamada açılış bakiyesi, eski tahsilatları müşteriye eşleştirme, geriye dönük tarih, tahsilat düzeltme/iptal/iade, banka entegrasyonu veya muhasebe fişi eklenmedi. Güncelleme mevcut kayıtları koruyarak tahsilat tablosuna isteğe bağlı müşteri ve kayıt bilgisi sütunlarını ekler.
+
+## Müşteri ve ürün düzenleme
+
+Müşteriler veya Ürünler ve stok listesindeki kaydın **Düzenle** düğmesine basın. Mevcut bilgiler forma gelir; değişikliklerden sonra **Kaydet** seçin. Yönetici ve personel düzenleyebilir; salt okunur kullanıcıda düğme görünmez ve sunucu isteği reddeder. Kayıt silme eklenmedi.
+
+Müşterinin firma adı, yetkilisi, telefonu ve bölgesi; ürünün adı, kodu, kategorisi, fiyatı, stok adedi ve kritik stok eşiği düzenlenebilir. Ürün kodunun benzersizliği ve mevcut alan doğrulamaları korunur. Stok alanına işlem sonrası toplam adet yazılır; girilen sayı stoğa eklenen miktar değildir. Bu işlem manuel stok düzeltmesidir; ayrı stok hareketi geçmişi bu aşamada yoktur.
+
+Her kayıt bir sürüm taşır. İki kullanıcı aynı kaydı açarsa ilk başarılı güncelleme sürümü artırır; ikinci eski form 409 hatasıyla reddedilir. Sipariş oluşturma ve iptal/stok iadesi de ürünün sürümünü artırır. Böylece eski bir ürün formu yeni stok hareketinin üzerine yazamaz. **Güncel listeyi yükle** düğmesi formu kapatır ve listeyi yeniler; sonra Düzenle ile güncel kayıt yeniden açılır. Hatalı güncelleme veya mükerrer kodda kayıt değişmez.
+
+Ürün fiyatı/adı/kodu değişikliği eski sipariş satırlarında saklanan bilgileri değiştirmez; yeni sipariş güncel bilgileri kullanır. Müşteri kimliği değişmediği için sipariş ve tahsilat bağlantıları, kayıt sayıları ve bakiye tutarları korunur. Müşteri adı güncellenirse ilişkili listelerde güncel adı görünür.
+
+Şema geçişi mevcut müşteri ve ürün tablolarına varsayılanı sıfır olan sürüm sütunu ekler; mevcut satırları silmez veya yeniden oluşturmaz. API güncellemesi POST /api/customers/{id} ve POST /api/products/{id} uçlarında, bütün form alanları ve listeden alınan expected_version ile yapılır. Yazma kilidi altında güncel rol ve sürüm yeniden kontrol edilir.
