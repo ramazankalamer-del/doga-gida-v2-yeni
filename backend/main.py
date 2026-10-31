@@ -46,6 +46,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS order_items(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id), product_id INTEGER NOT NULL REFERENCES products(id), name TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, price_cents INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS order_cancellations(order_id INTEGER PRIMARY KEY REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS collection_cancellations(collection_id INTEGER PRIMARY KEY REFERENCES collections(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS order_status_events(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), request_id TEXT NOT NULL UNIQUE, from_status TEXT NOT NULL, to_status TEXT NOT NULL, changed_at TEXT NOT NULL);
         ''')
         columns = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
         if 'request_id' not in columns:
@@ -306,6 +307,8 @@ class OrderInput(BaseModel):
             raise ValueError('Aynı ürün birden fazla satırda olamaz.')
         return items
 
+ORDER_NEXT_STATUS = {'Bekliyor':'Hazırlanıyor','Hazırlanıyor':'Dağıtımda','Dağıtımda':'Teslim edildi'}
+
 def order_dict(db, order_id):
     row = db.execute('SELECT o.id,o.customer_id,c.name customer,o.amount_cents,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id WHERE o.id=?',(order_id,)).fetchone()
     result = dict(row)
@@ -314,6 +317,8 @@ def order_dict(db, order_id):
     cancellation = db.execute('SELECT reason,cancelled_at FROM order_cancellations WHERE order_id=?',(order_id,)).fetchone()
     result['cancellation'] = dict(cancellation) if cancellation else None
     result['can_cancel'] = result['status']=='Bekliyor' and bool(result['items']) and not cancellation
+    result['next_status'] = ORDER_NEXT_STATUS.get(result['status']) if not cancellation else None
+    result['status_history'] = [dict(row) for row in db.execute('SELECT e.from_status,e.to_status,e.changed_at,u.username FROM order_status_events e JOIN users u ON u.id=e.user_id WHERE e.order_id=? ORDER BY e.id',(order_id,))]
     return result
 
 @app.get('/api/orders')
@@ -358,6 +363,32 @@ class CancellationInput(BaseModel):
     @classmethod
     def trim(cls, value):
         return value.strip() if isinstance(value, str) else value
+
+class OrderStatusInput(BaseModel):
+    expected_status: Literal['Bekliyor','Hazırlanıyor','Dağıtımda','Teslim edildi']
+    status: Literal['Hazırlanıyor','Dağıtımda','Teslim edildi']
+    request_id: UUID
+
+@app.post('/api/orders/{order_id}/status')
+def update_order_status(order_id: int, item: OrderStatusInput, user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        previous = db.execute('SELECT * FROM order_status_events WHERE request_id=?',(str(item.request_id),)).fetchone()
+        if previous:
+            if previous['order_id']!=order_id or previous['user_id']!=user['id'] or previous['from_status']!=item.expected_status or previous['to_status']!=item.status:
+                raise HTTPException(409, 'Bu aşama isteği daha önce farklı bilgilerle kullanılmış.')
+            return order_dict(db,order_id)
+        row = db.execute('SELECT status FROM orders WHERE id=?',(order_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, 'Sipariş bulunamadı.')
+        if row['status']!=item.expected_status:
+            raise HTTPException(409, 'Sipariş durumu değişti. Güncel listeyi yükleyip yeniden deneyin.')
+        if ORDER_NEXT_STATUS.get(row['status'])!=item.status:
+            raise HTTPException(409, 'Sipariş yalnızca sıradaki aşamaya ilerletilebilir.')
+        db.execute('UPDATE orders SET status=? WHERE id=?',(item.status,order_id))
+        db.execute('INSERT INTO order_status_events(order_id,user_id,request_id,from_status,to_status,changed_at) VALUES(?,?,?,?,?,?)',(order_id,user['id'],str(item.request_id),row['status'],item.status,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return order_dict(db,order_id)
 
 @app.post('/api/orders/{order_id}/cancel')
 def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.writer)):
