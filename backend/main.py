@@ -57,6 +57,9 @@ def initialize():
             if name not in collection_columns:
                 db.execute(f'ALTER TABLE collections ADD COLUMN {name} {definition}')
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS collections_request_id ON collections(request_id)')
+        for table in ('customers','products'):
+            if 'version' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
+                db.execute(f'ALTER TABLE {table} ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
         if not db.execute('SELECT 1 FROM seed_version WHERE version=1').fetchone():
             db.executemany('INSERT INTO customers(name,contact,phone,district) VALUES(?,?,?,?)', [
                 ('Örnek Bahar Market','Demo Yetkili 1','','Kadıköy'),('Örnek Deniz Gıda','Demo Yetkili 2','','Üsküdar'),('Örnek Yeşil Bakkal','Demo Yetkili 3','','Ataşehir'),('Örnek Gün Market','Demo Yetkili 4','','Maltepe')])
@@ -225,7 +228,28 @@ def customers(user=Depends(auth.current_user)):
 def add_customer(item: CustomerInput, user=Depends(auth.writer)):
     with database() as db:
         cursor = db.execute('INSERT INTO customers(name,contact,phone,district) VALUES(?,?,?,?)', (item.name,item.contact,item.phone,item.district))
-        return {'id':cursor.lastrowid, **item.model_dump()}
+        return {'id':cursor.lastrowid, 'version':0, **item.model_dump()}
+
+class CustomerUpdate(CustomerInput):
+    expected_version: int = Field(ge=0, strict=True)
+
+def require_active_writer(db, user_id):
+    actor = db.execute('SELECT role,active FROM users WHERE id=?',(user_id,)).fetchone()
+    if not actor or not actor['active'] or actor['role'] not in ('admin','staff'):
+        raise HTTPException(403, 'Bu işlem için yetkiniz yok.')
+
+@app.post('/api/customers/{customer_id}')
+def update_customer(customer_id: int, item: CustomerUpdate, user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        row = db.execute('SELECT version FROM customers WHERE id=?',(customer_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, 'Müşteri bulunamadı.')
+        if row['version']!=item.expected_version:
+            raise HTTPException(409, 'Kayıt başka bir işlemde değişti. Güncel listeyi yükleyip yeniden deneyin.')
+        db.execute('UPDATE customers SET name=?,contact=?,phone=?,district=?,version=version+1 WHERE id=?',(item.name,item.contact,item.phone,item.district,customer_id))
+        return dict(db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
 
 def product_dict(row):
     result = dict(row)
@@ -243,6 +267,25 @@ def add_product(item: ProductInput, user=Depends(auth.writer)):
         with database() as db:
             cursor = db.execute('INSERT INTO products(name,sku,category,price_cents,stock,min_stock) VALUES(?,?,?,?,?,?)',(item.name,item.sku.upper(),item.category,int(item.price*100),item.stock,item.min_stock))
             return product_dict(db.execute('SELECT * FROM products WHERE id=?',(cursor.lastrowid,)).fetchone())
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, 'Bu ürün kodu zaten kullanılıyor.')
+
+class ProductUpdate(ProductInput):
+    expected_version: int = Field(ge=0, strict=True)
+
+@app.post('/api/products/{product_id}')
+def update_product(product_id: int, item: ProductUpdate, user=Depends(auth.writer)):
+    try:
+        with database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            require_active_writer(db,user['id'])
+            row = db.execute('SELECT version FROM products WHERE id=?',(product_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, 'Ürün bulunamadı.')
+            if row['version']!=item.expected_version:
+                raise HTTPException(409, 'Kayıt başka bir işlemde değişti. Güncel listeyi yükleyip yeniden deneyin.')
+            db.execute('UPDATE products SET name=?,sku=?,category=?,price_cents=?,stock=?,min_stock=?,version=version+1 WHERE id=?',(item.name,item.sku.upper(),item.category,int(item.price*100),item.stock,item.min_stock,product_id))
+            return product_dict(db.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone())
     except sqlite3.IntegrityError:
         raise HTTPException(409, 'Bu ürün kodu zaten kullanılıyor.')
 
@@ -303,7 +346,7 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
         total = sum(line.quantity*product['price_cents'] for line,product in products)
         cursor = db.execute('INSERT INTO orders(customer_id,amount_cents,status,date,request_id,created_by) VALUES(?,?,?,?,?,?)',(item.customer_id,total,'Bekliyor',today(),str(item.request_id),user['id']))
         for line,product in products:
-            db.execute('UPDATE products SET stock=stock-? WHERE id=?',(line.quantity,line.product_id))
+            db.execute('UPDATE products SET stock=stock-?,version=version+1 WHERE id=?',(line.quantity,line.product_id))
             db.execute('INSERT INTO order_items(order_id,product_id,name,sku,quantity,price_cents) VALUES(?,?,?,?,?,?)',(cursor.lastrowid,line.product_id,product['name'],product['sku'],line.quantity,product['price_cents']))
         return order_dict(db,cursor.lastrowid)
 
@@ -338,7 +381,7 @@ def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.write
             if not product or product['stock']+line['quantity']>10000000:
                 raise HTTPException(409, 'Stok iadesi yapılamadı. Ürün kayıtlarını kontrol edin.')
         for line in lines:
-            db.execute('UPDATE products SET stock=stock+? WHERE id=?',(line['quantity'],line['product_id']))
+            db.execute('UPDATE products SET stock=stock+?,version=version+1 WHERE id=?',(line['quantity'],line['product_id']))
         db.execute("UPDATE orders SET status='İptal edildi' WHERE id=?",(order_id,))
         db.execute('INSERT INTO order_cancellations VALUES(?,?,?,?)',(order_id,user['id'],item.reason,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
         return order_dict(db,order_id)
