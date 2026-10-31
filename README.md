@@ -7,11 +7,35 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 
 ### Müşteri GPS konumu
 
+**Müşteri haritası** menüsü GPS kaydı bulunan müşterileri etkileşimli haritada
+gösterir. Firma, yetkili veya ilçe araması ile GPS kayıtlı/konum eksik filtreleri
+hem listeye hem haritadaki noktalara uygulanır. Konumu olmayan müşteriye sahte
+bir nokta atanmaz. Aynı koordinattaki müşteriler tek işarette gruplanır;
+açılan listeden her biri ayrı seçilebilir. İşaret veya listedeki müşteri seçilince
+bilgiler ve yetkili kullanıcı için kart düzenleme düğmesi gösterilir. Salt okunur
+kullanıcı haritayı ve bilgileri görebilir, kart düzenleyemez. GPS değişikliği veya
+silme sonrasında harita güncellenir. **Tüm konumları göster** filtreleri kaldırıp
+haritayı kayıtlı noktaların tamamına döndürür.
+
+Harita Leaflet 1.9.4 ile tarayıcıda çizilir; müşteri adları ve telefonlar harita
+servisine gönderilmez. Görüntülenen bölgenin harita görselleri OpenStreetMap'ten
+yüklenir; internet gerekir. Atıf harita üzerinde görünür. Görseller yüklenemezse
+uyarı ve tekrar deneme düğmesi gösterilir; müşteri listesi kullanılabilir.
+Toplu/çevrimdışı harita indirme ve rota optimizasyonu eklenmemiştir.
+Tile sağlayıcısı gerektiğinde derleme sırasında `VITE_MAP_TILE_URL` ile
+değiştirilebilir; farklı sağlayıcının atıf gereksinimleri ayrıca ayarlanmalıdır.
+Üretim trafiği için sağlayıcının kapasite/kullanım politikasını değerlendirin:
+https://operations.osmfoundation.org/policies/tiles/ .
+
+Harita veri filtreleri ve nokta gruplama kontrolleri:
+`cd frontend` ardından `node --experimental-strip-types --test tests/customerMap.test.mjs`.
+
 Müşteri ekleme/düzenleme formunda isteğe bağlı enlem (-90–90) ve boylam
 (-180–180) alanları bulunur. İki alan birlikte doldurulur. **GPS bilgisini
 temizle** iki alanı boşaltır; silme veya değişiklik **Kaydet** ile uygulanır.
 Müşteri silinmez. Listedeki **Haritada aç** bağlantısı kayıtlı noktayı
-OpenStreetMap'te açar; koordinatlar dış servise ancak bağlantı seçilince gönderilir.
+OpenStreetMap'te açar; seçilen koordinatlar bu bağlantı ile dış servise gönderilir.
+Müşteri haritası ekranı ayrıca görüntülenen bölgenin harita görsellerini yükler.
 **Konumumu al** düğmesi müşterinin yanındayken cihazın güncel konumunu
 tek sefer alır (tarayıcı izni gerekir). Koordinatları ve yaklaşık doğruluğu
 gösterir; kaydetmeden önce kontrol edilebilir. Konum aranırken Kaydet devre

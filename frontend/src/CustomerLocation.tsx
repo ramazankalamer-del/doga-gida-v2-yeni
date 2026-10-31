@@ -32,6 +32,6 @@ export default function CustomerLocation({initial,disabled,onLocating}:{initial?
   <div className="form-row"><label>Enlem<input name="latitude" type="number" min="-90" max="90" step="any" value={latitude} disabled={locating} onChange={e=>{setLatitude(e.target.value);setMessage('');}} required={longitude!==''} placeholder="41.008200"/></label>
   <label>Boylam<input name="longitude" type="number" min="-180" max="180" step="any" value={longitude} disabled={locating} onChange={e=>{setLongitude(e.target.value);setMessage('');}} required={latitude!==''} placeholder="28.978400"/></label></div>
   <button type="button" className="secondary" disabled={disabled||locating||(latitude===''&&longitude==='')} onClick={()=>{setLatitude('');setLongitude('');setMessage('');}}>GPS bilgisini temizle</button>
-  <p className="order-help">Ekleme, değişiklik ve temizleme işlemi Kaydet düğmesine bastığınızda uygulanır. Konum yalnızca Haritada aç bağlantısını seçtiğinizde harita sitesine gönderilir.</p>
+  <p className="order-help">Ekleme, değişiklik ve temizleme işlemi Kaydet düğmesine bastığınızda uygulanır. Harita bağlantıları dış harita servisini kullanır.</p>
  </fieldset>;
 }
