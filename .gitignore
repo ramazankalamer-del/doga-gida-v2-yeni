@@ -7,6 +7,7 @@ dist/
 *.tsbuildinfo
 frontend/test-results/
 frontend/playwright-report/
+test-temp*/
 
 # Yerel ayarlar ve gizli bilgiler
 .env

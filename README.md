@@ -1,19 +1,20 @@
 # Doğa Gıda V2
 
 Türkçe ve mobil uyumlu React + TypeScript yönetim paneli; FastAPI ve SQLite backend.
-Bu ilk sürüm yalnızca örnek veriler içerir. Kimlik doğrulama henüz eklenmediğinden gerçek müşteri verileriyle veya herkese açık canlı ortamda kullanılmamalıdır.
+Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi ve sunucuda rol kontrolü eklendi. Canlı dağıtım henüz doğrulanmadı; geliştirme ve testlerde yalnızca örnek veri kullanın.
 
 ## Özellikler
 
 - İstanbul saatine göre günlük satış, sipariş ve tahsilat özeti
 - Toplam müşteri, stok ve kritik stok göstergeleri
-- Son siparişler (örnek kayıtlar)
+- Sipariş oluşturma, ürün satırları, sunucuda tutar hesaplama ve otomatik stok düşümü
+- Sipariş listesi ve son sipariş özeti
 - Müşteri listeleme, arama ve ekleme
 - Ürün listeleme, arama ve ekleme; benzersiz ürün kodu kontrolü
 - SQLite üzerinde kalıcı kayıtlar; para tutarları veritabanında kuruş olarak saklanır
 - Form doğrulama, yüklenme ve hata durumları
 
-Sipariş ve tahsilat oluşturma, kullanıcı girişi, yetkilendirme, çevrimdışı çalışma ve muhasebe entegrasyonu bu sürümün kapsamına dahil değildir. Mobil testler Chromium telefon ekranı benzetimidir; gerçek Android/iPhone cihaz testi yapılmamıştır.
+Tahsilat oluşturma, çevrimdışı çalışma ve muhasebe entegrasyonu bu sürümün kapsamına dahil değildir. Mobil testler Chromium telefon ekranı benzetimidir; gerçek Android/iPhone cihaz testi yapılmamıştır.
 
 ## Gereksinimler
 
@@ -74,21 +75,17 @@ cd frontend
 npm run build
 ```
 
-Uçtan uca testler için ayrı bir backend terminalinde (normal sunucu 8000 portunda çalışmamalı):
+Uçtan uca testler geçici, ayrı bir veritabanı ve yalnızca test hesapları oluşturur. 8001 portu boş olmalıdır; test sunucusu otomatik başlatılır, mevcut sunucu tekrar kullanılmaz.
 
-```bash
-cd backend
-DATABASE_PATH=/tmp/doga-e2e.db ../.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-Diğer terminalde:
-
-```bash
+```powershell
 cd frontend
+npx playwright install chromium
 npm run test:e2e
 ```
 
-Test yapılandırması `/usr/bin/chromium` kullanır. Farklı kurulumda `CHROMIUM_PATH` ile Chromium çalıştırılabilir dosyasını belirtin. Testler yalnızca ayrı test veritabanına örnek müşteri ve ürün ekler. Masaüstü (1440×1000) ve mobil (390×844) boyutlarında listeleme, ekleme, arama, yeniden yükleme sonrası kalıcılık ve yatay taşma kontrol edilir. Ekran görüntüleri `/tmp/doga-desktop.png` ve `/tmp/doga-mobile.png` olarak alınır.
+Linux/macOS için `E2E_SERVER_COMMAND="../.venv/bin/python ../backend/e2e_server.py"` ayarlayın.
+Varsayılan Playwright Chromium kullanılır; alternatif olarak `CHROMIUM_PATH` belirtilebilir.
+Masaüstü ve mobil boyutlarda giriş, salt okunur rol, çıkış, kullanıcı yönetimi, müşteri/ürün ekleme, arama, sipariş oluşturma, yetersiz stok, kalıcılık ve yatay taşma denetlenir. Test sunucusu 8001 portunu kullanır; 8000 portundaki normal uygulamaya ve hesabınıza dokunulmaz. Ekran görüntüleri Playwright test çıktılarındadır.
 
 ## Proje yapısı
 
@@ -96,6 +93,9 @@ Test yapılandırması `/usr/bin/chromium` kullanır. Farklı kurulumda `CHROMIU
 backend/main.py                FastAPI, SQLite, örnek veri ve API uçları
 backend/requirements.txt       Python bağımlılıkları
 backend/tests/test_api.py      API ve veri doğrulama testleri
+backend/tests/test_users.py    Kullanıcı yönetimi API testleri
+backend/tests/test_user_rules.py Kullanıcı yönetimi iş kuralı testleri
+frontend/src/UserManagement.tsx Yönetici kullanıcı ekranı
 frontend/src/main.tsx          React ekranları ve formlar
 frontend/src/style.css         Mobil uyumlu tasarım
 frontend/vite.config.ts        Geliştirme sunucusu ve API proxy
@@ -105,11 +105,56 @@ frontend/tests/app.spec.ts     Masaüstü ve mobil test akışları
 frontend/package-lock.json     Kilitli JavaScript bağımlılıkları
 ```
 
-## Doğrulanan sonuçlar
+## Giriş, roller ve kullanıcı yönetimi
 
-- TypeScript kontrolü ve Vite derlemesi başarılı.
-- 5 backend testi başarılı.
-- 2 Chromium uçtan uca testi başarılı (masaüstü ve mobil).
-- Backend testlerinde bağımlılık kaynaklı bir AnyIO kullanım dışı bırakma uyarısı var; test hatası değil.
+| Rol | Panel ve listeler | Müşteri/ürün ekleme |
+| --- | --- | --- |
+| admin (Yönetici) | Evet | Evet |
+| staff (Personel) | Evet | Evet |
+| viewer (Salt okunur) | Evet | Hayır |
 
-Bu sonuçlar mevcut geliştirme ortamına aittir; canlı dağıtım veya gerçek cihaz doğrulaması anlamına gelmez.
+Yönetici menüsündeki **Kullanıcılar** ekranında kullanıcı listeleme, oluşturma, rol değiştirme ve aktif/pasif durumu yönetilir. Personel ve salt okunur hesaplar bu ekrana ve API uçlarına erişemez. Herkese açık kayıt yoktur. İlk yönetici aşağıdaki yerel komutla oluşturulur; bundan sonra yeni hesaplar yönetici ekranından açılabilir. Veritabanındaki rol ve aktiflik her istekte yeniden okunur.
+
+Yönetici kendi rolünü veya aktifliğini değiştiremez; son aktif yöneticinin yetkileri kaldırılamaz. Rol veya aktiflik değişikliği hedef hesabın bütün oturumlarını iptal eder. Pasif kullanıcı giriş yapamaz; yeniden aktifleştirilirse mevcut parolasıyla giriş yapabilir. Kullanıcı listesi ve oluşturma yanıtlarında parola özetleri ve oturum bilgileri bulunmaz. İşlemler CSRF ve sunucuda yönetici kontrolüyle korunur. Eşzamanlı yazmalarda yetki, veritabanı yazma kilidi alındıktan sonra yeniden kontrol edilir.
+
+**Windows PowerShell kurulumu ve ilk kullanıcı:**
+
+```powershell
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+cd backend
+../.venv/Scripts/python.exe manage_user.py yonetici --role admin
+# Parola gizli istemle iki kez sorulur; 12–128 karakter gerekir.
+# Yerel HTTP geliştirmesinde:
+$env:COOKIE_SECURE = "0"
+../.venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Diğer roller için komutta `--role staff` veya `--role viewer` kullanın. Varsayılan hesap/parola ve imzalama anahtarı yoktur. Linux/macOS üzerinde `.venv/bin/python` kullanılır.
+
+Parolalar rastgele tuzla scrypt (N=32768, r=8, p=3) kullanılarak özetlenir. Rastgele oturum belirtecinin yalnızca SHA-256 özeti SQLite'ta tutulur. Oturum 8 saat sonra sona erer; yeniden giriş belirteci yeniler, çıkış mevcut oturumu sunucudan siler. Çerez HttpOnly, SameSite=Strict ve varsayılan olarak Secure'dur. HTTP için `COOKIE_SECURE=0` yalnızca yerel geliştirmede kullanılmalıdır; HTTPS dağıtımında bu ayarı kaldırın. Oturum bilgileri localStorage'a yazılmaz. Yazma işlemlerinde CSRF belirteci, girişte özel başlık gerekir; CORS açılmamıştır. API yanıtları önbelleğe alınmaz.
+
+Kullanıcı adı ve bağlantı IP'si başına 15 dakikada 5 başarısız girişten sonra 429 döner. Proxy arkasında istemci IP'si yalnızca güvenilir proxy yapılandırmasıyla kullanılmalıdır. Bu aşamada parola sıfırlama, MFA ve merkezi denetim kaydı yoktur; HTTPS ve dağıtım yapılandırması ayrıca doğrulanmalıdır.
+
+Mevcut müşteri/ürün tabloları ve örnek veri ekleme davranışı korunur. Yeni kimlik tabloları `CREATE TABLE IF NOT EXISTS` ile eklenir; testler geçici veritabanları kullanır.
+
+## Doğrulama
+
+- API: `cd backend; ../.venv/Scripts/python.exe -m pytest -q --basetemp=../test-temp`
+- İş kuralları (HTTP sunucusu gerektirmez): `cd backend; ../.venv/Scripts/python.exe -m pytest tests/test_user_rules.py -q --basetemp=../test-temp-rules`
+- Arayüz: `cd frontend; npm run build`
+- Tarayıcı: `cd frontend; npm run test:e2e`
+
+Güncel çalıştırma sonuçları teslim notunda belirtilir. Mobil testler Chromium telefon ekranı benzetimidir; gerçek cihaz veya canlı ortam testi değildir.
+
+## Sipariş oluşturma ve stok — ikinci iş aşaması
+
+Menüde **Siparişler → Sipariş oluştur** seçin. Müşteriyi ve en fazla 50 farklı ürün satırını seçip adetleri girin. Yönetici ve personel sipariş oluşturabilir; salt okunur hesap yalnızca listeyi görüntüler.
+
+Birim fiyatlar ve kesin toplam sunucudaki güncel ürün kayıtlarından alınır. Tutarlar kuruş olarak hesaplanır ve saklanır. Kaydedilen siparişin ürün adı, kodu, birim fiyatı ve miktarı saklanır. Sipariş `Bekliyor` durumunda oluşturulur; stok o anda düşer ve panel özeti güncellenir.
+
+Stok yetmezse, müşteri/ürün yoksa veya herhangi bir satır geçersizse sipariş ve stok değişiklikleri birlikte iptal edilir. SQLite yazma kilidi altında yapılan kontrol, son ürünün eşzamanlı iki siparişe satılmasını önler. Form her yeni siparişte bir istek kimliği oluşturur; aynı kimlikle aynı isteğin tekrarı önceki siparişi döndürür ve stoktan yeniden düşmez. Aynı kimliğin farklı bilgilerle kullanılması 409 hatası verir.
+
+Mevcut sipariş kayıtları korunur; eski örnek siparişlere geriye dönük stok düşümü yapılmaz. Eski kayıtlarda ürün detayı olmadığı belirtilir. Şema geçişi eksik sütunları ve ürün satırları tablosunu ekler; müşteri ve ürün kayıtlarını silmez. Mevcut SQLite veritabanını kullanmaya devam edebilirsiniz.
+
+Bu aşamada sipariş iptali/iade, stok geri alma, sipariş düzenleme, iskonto, KDV ayrıştırma ve tahsilat eklenmedi. Gösterilen tutar mevcut ürün fiyatlarının toplamıdır; fatura düzenlenmez.
