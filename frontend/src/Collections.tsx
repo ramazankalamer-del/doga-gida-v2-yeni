@@ -6,16 +6,18 @@ type Request = <T>(path:string,data?:object)=>Promise<T>;
 const methods = {cash:'Nakit',transfer:'Havale / EFT',card:'Kart'};
 const money = (cents:number)=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY'}).format(cents/100);
 
-export default function Collections({request,canWrite,canCancel,onSaved}:{request:Request;canWrite:boolean;canCancel:boolean;onSaved:()=>Promise<void>}){
+export default function Collections({request,canWrite,canCancel,onSaved,initialCustomerId}:{request:Request;canWrite:boolean;canCancel:boolean;onSaved:()=>Promise<void>;initialCustomerId?:number}){
  const [balances,setBalances]=useState<Balance[]>([]),[collections,setCollections]=useState<Collection[]>([]);
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[opened,setOpened]=useState(false);
  const [cancelTarget,setCancelTarget]=useState<Collection|null>(null),[cancelReason,setCancelReason]=useState('');
  const [filter,setFilter]=useState(''),[requestId,setRequestId]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const [receiptCustomer,setReceiptCustomer]=useState(initialCustomerId?String(initialCustomerId):'');
  async function load(){setLoading(true);setError('');try{const [b,c]=await Promise.all([request<Balance[]>('customer-balances'),request<Collection[]>('collections')]);setBalances(b);setCollections(c);}catch(e){setError((e as Error).message);}finally{setLoading(false);}}
  useEffect(()=>{void load();},[]);
+ useEffect(()=>{if(initialCustomerId&&canWrite){setFilter(String(initialCustomerId));setReceiptCustomer(String(initialCustomerId));setRequestId(crypto.randomUUID());setOpened(true);}},[initialCustomerId,canWrite]);
  useEffect(()=>{if(!opened)return;const close=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!busy)setOpened(false);};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close);},[opened,busy]);
  useEffect(()=>{if(!cancelTarget)return;const close=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!busy)setCancelTarget(null);};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close);},[cancelTarget,busy]);
- function open(){setRequestId(crypto.randomUUID());setError('');setNotice('');setOpened(true);}
+ function open(){setReceiptCustomer(filter);setRequestId(crypto.randomUUID());setError('');setNotice('');setOpened(true);}
  async function submit(e:FormEvent<HTMLFormElement>){
   e.preventDefault();setBusy(true);setError('');
   const data=Object.fromEntries(new FormData(e.currentTarget));
@@ -38,7 +40,7 @@ export default function Collections({request,canWrite,canCancel,onSaved}:{reques
   </>}
   {cancelTarget&&<div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="collection-cancel-title"><div className="panel-head"><h2 id="collection-cancel-title">Tahsilatı iptal et</h2><button className="secondary" disabled={busy} onClick={()=>setCancelTarget(null)}>Kapat</button></div><form onSubmit={cancel}><p><strong>TH-{String(cancelTarget.id).padStart(4,'0')} · {cancelTarget.customer} · {money(cancelTarget.amount_cents)}</strong></p><p>Bu kayıt iptal edilecek. Müşteri bakiyesi ve tahsilat özeti yeniden hesaplanacak; kayıt ve açıklaması saklanacak. Banka veya kart üzerinden para iadesi yapılmaz.</p><label>Tahsilat iptal nedeni<input required minLength={3} maxLength={500} autoFocus value={cancelReason} disabled={busy} onChange={e=>setCancelReason(e.target.value)}/></label>{error&&<div className="error" role="alert">{error}</div>}<div className="form-actions"><button className="secondary" type="button" disabled={busy} onClick={()=>setCancelTarget(null)}>Vazgeç</button><button className="primary" disabled={busy}>{busy?'İptal ediliyor…':'Tahsilat iptalini onayla'}</button></div></form></section></div>}
   {opened&&<div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="collection-title"><div className="panel-head"><h2 id="collection-title">Tahsilat ekle</h2><button className="secondary" disabled={busy} onClick={()=>setOpened(false)}>Kapat</button></div><form onSubmit={submit}>
-   <label>Müşteri<select aria-label="Tahsilat müşterisi" name="customer_id" defaultValue={filter} required disabled={busy}><option value="">Müşteri seçin</option>{balances.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+   <label>Müşteri<select aria-label="Tahsilat müşterisi" name="customer_id" value={receiptCustomer} onChange={e=>setReceiptCustomer(e.target.value)} required disabled={busy}><option value="">Müşteri seçin</option>{balances.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
    <label>Tutar (₺)<input name="amount" type="number" required min="0.01" max="10000000" step="0.01" disabled={busy}/></label>
    <label>Tahsilat yöntemi<select aria-label="Tahsilat yöntemi" name="method" defaultValue="cash" disabled={busy}>{Object.entries(methods).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
    <label>Açıklama (isteğe bağlı)<input name="note" maxLength={300} disabled={busy}/></label>
@@ -48,3 +50,4 @@ export default function Collections({request,canWrite,canCancel,onSaved}:{reques
   </form></section></div>}
  </>;
 }
+

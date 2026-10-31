@@ -5,6 +5,114 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 
 ## Özellikler
 
+### Müşteri kartı kısayolları, ekstre ve rota günleri
+
+Müşteri listesi, kayıt düzenleme kartı ve haritada seçilen müşteri üzerinde
+**Hesap ekstresi**, **Satış yap**, **Tahsilat al** ve **Rota günü** kısayolları
+bulunur. Satış ve tahsilat kısayolları mevcut formları seçilen müşteriyle açar;
+düğmeye basmak tek başına kayıt oluşturmaz. Satış mevcut sipariş akışını
+kullanır (Merkez stoğu kayıt anında düşer); fatura kesmez. Tahsilat para çekmez,
+yalnızca kayıt tutar. Kartta kaydedilmemiş değişiklikler bu kısayollarla uygulanmaz.
+
+Ekstre salt okunurdur; admin, staff ve viewer erişebilir. Tarih aralığına göre
+devir bakiyesi, dönem borç/alacak toplamları, dönem sonu ve güncel hesap bakiyesi
+ayrı gösterilir. Siparişler borç, tahsilatlar alacak; sipariş iptalleri alacak,
+tahsilat iptalleri borç ters hareketidir. İptaller kayıt tarihindeki asıl hareketi
+silmez; iptal tarihindeki ters hareketle dengelenir. İptal tarihi İstanbul gününe
+çevrilir. Aynı gün hareketleri sipariş, tahsilat, sipariş iptali ve tahsilat iptali
+sırasıyla; kendi içinde kayıt numarasıyla gösterilir. Saat sırası iddia edilmez.
+Para hesapları kuruş cinsinden tamsayıdır. Müşteriye bağlı olmayan eski
+tahsilatlar ekstreye eklenmez. İptal tarihi eksik eski iptal edilmiş siparişler
+etkisiz satır olarak açıklanır; yapay iptal tarihi oluşturulmaz.
+
+Rota günü seçiminde Pazartesi–Pazar arasından birden fazla gün seçilebilir;
+**Günleri temizle** ve ardından Kaydet ziyaret günlerini kaldırır, müşteriyi silmez.
+Rota günleri müşteri kartının sürümüne bağlıdır: eski kartla yazma 409 ile
+reddedilir. GPS veya diğer kart alanları bu kısayoldan değişmez. Eski istemciler
+rota günlerini göndermediğinde mevcut günler korunur. Admin/staff günleri
+değiştirebilir; viewer günleri ve ekstreyi görür, satış/tahsilat/rota yazma
+düğmelerini kullanamaz. Şema geçişi önce SQLite yedeği alır. Gün seçimi ziyaret
+planıdır; otomatik rota optimizasyonu veya bildirim oluşturmaz.
+
+API: `GET /api/customers/{id}/statement?start_date=2026-10-01&end_date=2026-10-31`
+ve `POST /api/customers/{id}/route-days` (`route_days`: 1–7 arası benzersiz günler,
+`expected_version`: güncel müşteri sürümü). Geçersiz tarihler/günler reddedilir.
+
+### Müşteri GPS konumu
+
+**Müşteri haritası** menüsü GPS kaydı bulunan müşterileri etkileşimli haritada
+gösterir. Firma, yetkili veya ilçe araması ile GPS kayıtlı/konum eksik filtreleri
+hem listeye hem haritadaki noktalara uygulanır. Konumu olmayan müşteriye sahte
+bir nokta atanmaz. Aynı koordinattaki müşteriler tek işarette gruplanır;
+açılan listeden her biri ayrı seçilebilir. İşaret veya listedeki müşteri seçilince
+bilgiler ve yetkili kullanıcı için kart düzenleme düğmesi gösterilir. Salt okunur
+kullanıcı haritayı ve bilgileri görebilir, kart düzenleyemez. GPS değişikliği veya
+silme sonrasında harita güncellenir. **Tüm konumları göster** filtreleri kaldırıp
+haritayı kayıtlı noktaların tamamına döndürür.
+
+Harita Leaflet 1.9.4 ile tarayıcıda çizilir; müşteri adları ve telefonlar harita
+servisine gönderilmez. Görüntülenen bölgenin harita görselleri OpenStreetMap'ten
+yüklenir; internet gerekir. Atıf harita üzerinde görünür. Görseller yüklenemezse
+uyarı ve tekrar deneme düğmesi gösterilir; müşteri listesi kullanılabilir.
+Toplu/çevrimdışı harita indirme ve rota optimizasyonu eklenmemiştir.
+Tile sağlayıcısı gerektiğinde derleme sırasında `VITE_MAP_TILE_URL` ile
+değiştirilebilir; farklı sağlayıcının atıf gereksinimleri ayrıca ayarlanmalıdır.
+Üretim trafiği için sağlayıcının kapasite/kullanım politikasını değerlendirin:
+https://operations.osmfoundation.org/policies/tiles/ .
+
+Harita veri filtreleri ve nokta gruplama kontrolleri:
+`cd frontend` ardından `node --experimental-strip-types --test tests/customerMap.test.mjs`.
+
+Müşteri ekleme/düzenleme formunda isteğe bağlı enlem (-90–90) ve boylam
+(-180–180) alanları bulunur. İki alan birlikte doldurulur. **GPS bilgisini
+temizle** iki alanı boşaltır; silme veya değişiklik **Kaydet** ile uygulanır.
+Müşteri silinmez. Listedeki **Haritada aç** bağlantısı kayıtlı noktayı
+OpenStreetMap'te açar; seçilen koordinatlar bu bağlantı ile dış servise gönderilir.
+Müşteri haritası ekranı ayrıca görüntülenen bölgenin harita görsellerini yükler.
+**Konumumu al** düğmesi müşterinin yanındayken cihazın güncel konumunu
+tek sefer alır (tarayıcı izni gerekir). Koordinatları ve yaklaşık doğruluğu
+gösterir; kaydetmeden önce kontrol edilebilir. Konum aranırken Kaydet devre
+dışıdır. İzin reddi, desteklenmeyen tarayıcı, konum bulunamaması ve zaman aşımı
+durumlarında elle giriş mümkündür; mevcut GPS silinmez. Arka planda takip yoktur.
+Gerçek cihazın GPS doğruluğu donanım ve ortama bağlıdır.
+
+API JSON sayıları veya iki alan için birlikte `null` kabul eder. Geçersiz,
+eksik eş, boolean, NaN/sonsuz veya sınır dışı koordinatlar reddedilir.
+Güncellemede iki alan da gönderilmezse mevcut GPS korunur; eski istemciler
+diğer müşteri bilgilerini düzenlerken konumu yanlışlıkla silmez. Koordinatlar
+diğer müşteri alanlarıyla birlikte sürüm kontrolü, rol ve CSRF korumasına tabidir.
+Eski kayıtlar boş konumla korunur; geçiş öncesinde veritabanı yedeği alınır.
+
+### Merkez ve İade depoları
+
+**Depolar ve stok hareketleri** ekranı Merkez Depo ve İade Deposu stoklarını
+ürün bazında ayrı gösterir. Mevcut `products.stock` alanı Merkez Depo'nun
+satılabilir stoğudur; yeni `return_stock` alanı kontrol bekleyen iade stoğudur.
+Eski stoklar, kullanıcılar, siparişler ve hareketler korunur. Şema geçişinden
+önce mevcut veritabanının tutarlı yedeği veritabanının yanındaki `backups/`
+klasörüne alınır. Eski hareketler Merkez Depo'ya atanır; İade Deposu sıfırdan
+başlar ve sahte geçmiş oluşturulmaz. Yeniden başlatma stokları sıfırlamaz.
+
+- **Stok girişi ekle:** Merkez Depo'ya teslimat ekler.
+- **İade kabul et:** fiziksel ürünü yalnızca İade Deposu'na ekler. Sipariş,
+  tahsilat ve müşteri bakiyesi değişmez; bu işlem muhasebesel iade değildir.
+- **Depolar arası transfer:** İade → Merkez yönünde kontrol ve satışa uygunluk
+  onayı gerekir. Merkez → İade yönü ürünü kontrole ayırır.
+- Siparişler sadece Merkez stoğunu kullanır. Bekleyen siparişin iptali de
+  Merkez stoğunu geri ekler. Ürün düzenleme ekranındaki stok düzeltmesi
+  sadece Merkez'i değiştirir; İade stoğu korunur.
+
+Transferin iki bacağı tek SQLite işleminde kaydedilir; fiziksel toplam değişmez.
+Yetersiz kaynak veya depo başına 10.000.000 adet sınırı aşıldığında işlem
+tamamen reddedilir. İstek kimlikleri tekrar kaydı önler; değiştirilmiş bir
+istekle aynı kimlik kullanılırsa 409 döner. Yönetici ve personel yazabilir;
+salt okunur kullanıcı iki depoyu ve geçmişi görebilir. API, CSRF ve yazma
+kilidi altında güncel rol kontrolünü uygular.
+
+API: `GET /api/warehouses`, `POST /api/warehouse-returns`,
+`POST /api/warehouse-transfers`. Bu aşama seri/lot, son kullanma tarihi,
+hurdaya ayırma ve müşteri/siparişe bağlı mali iade içermez.
+
 - İstanbul saatine göre günlük satış, sipariş ve tahsilat özeti
 - Toplam müşteri, stok ve kritik stok göstergeleri
 - Sipariş oluşturma, ürün satırları, sunucuda tutar hesaplama ve otomatik stok düşümü
@@ -17,6 +125,30 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 Çevrimdışı çalışma ve muhasebe entegrasyonu bu sürümün kapsamına dahil değildir. Mobil testler Chromium telefon ekranı benzetimidir; gerçek Android/iPhone cihaz testi yapılmamıştır.
 
 ## Gereksinimler
+
+### Windows'ta kolay açılış
+
+Proje klasöründeki **BASLAT.bat** dosyasını çift tıklayın. Python 3.12+ gerekir.
+İlk kaynak kurulumunda Node.js 22.12+ ve internet bağlantısı da gerekir.
+Başlatıcı sanal ortamı ve bağımlılıkları hazırlar; derlenmiş arayüz yoksa
+`npm ci` ve `npm run build` çalıştırır. İlk yönetici yoksa kullanıcı adı
+ve gizli parola ister. Ardından tarayıcıyı açar. Pencere açık kalmalıdır;
+kapatmak için Ctrl+C kullanın.
+
+8000 portu doluysa mevcut işlemi kapatmadan 8010–8020 arasından boş port seçer;
+doğru adres terminalde yazılır. Her açılışta mevcut V2 SQLite dosyasının
+tutarlı yedeği `yedekler/` içine alınır. Yerel HTTP oturumu için
+`COOKIE_SECURE=0` yalnızca bu başlatıcının alt sürecine uygulanır;
+sunucu yalnızca `127.0.0.1` adresini dinler.
+
+Kaynakları güncelledikten sonra `python baslat.py --rebuild` çalıştırın.
+İsteğe bağlı `--port 8015` ve `--no-browser` seçenekleri vardır.
+Bu depo V2 veritabanını (`backend/data/doga.db`) kullanır; eski
+`doga_gida_dev.db` dosyasını bunun üzerine kopyalamayın. Eski paketin
+verilerini V2'ye aktarma ayrı bir işlemdir.
+
+Arayüz derlenmeden backend elle başlatılırsa ana sayfa artık 404 yerine
+kurulum adımlarını gösterir (HTTP 503); `/api/health` ve `/docs` çalışır.
 
 Python 3.12+ ve Node.js 22.12+ (bu ortamda Python 3.12 ve Node.js 24 kullanıldı).
 Aşağıdaki komutları proje kökünde çalıştırın:
@@ -236,3 +368,4 @@ Takip başladıktan sonra yeni ürünün pozitif açılış stoğu, stok girişi
 Stok ve hareket kaydı aynı SQLite işlemi içinde yazılır; hareket kaydı hatasında stok değişikliği geri alınır. Giriş, ürün sürümünü artırır ve eski düzenleme formlarının üzerine yazmasını engeller. Tekrarlanan/eşzamanlı aynı giriş tek hareket oluşturur; farklı girişlerin miktarları kaybolmadan toplanır. Sipariş ve iptal tekrarları hareketi ikinci kez üretmez.
 
 Hareket kayıtlarını düzenleme/silme, stok girişini iptal etme, depo/parti/son kullanma tarihi takibi, tedarikçi hesabı ve geçmişe dönük hareket oluşturma bu aşamada yoktur. Başlangıç kaydı mevcut stok durumudur; geçmiş bir fiziksel teslimatı temsil etmez.
+
