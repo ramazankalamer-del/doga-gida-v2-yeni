@@ -249,3 +249,43 @@ test('müşteri/ürün düzenleme ve eski stok formu koruması',async({page},inf
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
  await page.screenshot({path:info.outputPath('editing.png'),fullPage:true});
 });
+
+test('sipariş hazırlık, dağıtım, teslim ve aşama geçmişi',async({page},info)=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ const me=await (await page.request.get('/api/auth/me')).json();
+ const created=await page.request.post('/api/orders',{headers:{'X-CSRF-Token':me.csrf},data:{customer_id:2,request_id:crypto.randomUUID(),items:[{product_id:2,quantity:1}]}});
+ expect(created.status()).toBe(201);
+ const order=await created.json();
+ const stockBefore=(await (await page.request.get('/api/products')).json()).find((p:{id:number})=>p.id===2).stock;
+ if(info.project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
+ await page.getByRole('button',{name:'Siparişler',exact:true}).click();
+ const row=page.getByRole('row').filter({has:page.getByText('DG-'+String(order.id).padStart(4,'0'),{exact:true})});
+ await row.getByRole('button',{name:'Hazırlığa al',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Sipariş aşamasını değiştir'})).toBeVisible();
+ await page.getByRole('button',{name:'Vazgeç',exact:true}).click();
+ await expect(row.getByRole('button',{name:'İptal et',exact:true})).toBeVisible();
+ const steps=[['Hazırlığa al','Hazırlanıyor'],['Dağıtıma çıkar','Dağıtımda'],['Teslim edildi olarak işaretle','Teslim edildi']];
+ for(const [button,status] of steps){
+  await row.getByRole('button',{name:button,exact:true}).click();
+  await page.getByRole('button',{name:'Aşamayı onayla',exact:true}).click();
+  await expect(page.getByRole('status')).toContainText(status+' aşamasına taşındı');
+  await expect(row.getByRole('button',{name:'İptal et',exact:true})).toHaveCount(0);
+ }
+ await expect(row.getByRole('button')).toHaveCount(0);
+ await row.getByText('Aşama geçmişi (3)',{exact:true}).click();
+ await expect(row).toContainText('Bekliyor → Hazırlanıyor');
+ await expect(row).toContainText('Dağıtımda → Teslim edildi');
+ await expect(row).toContainText('e2e-admin');
+ expect((await (await page.request.get('/api/products')).json()).find((p:{id:number})=>p.id===2).stock).toBe(stockBefore);
+ await page.screenshot({path:info.outputPath('order-status.png'),fullPage:true});
+ await page.reload();
+ if(info.project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
+ await page.getByRole('button',{name:'Siparişler',exact:true}).click();
+ await expect(row.getByText('Teslim edildi',{exact:true})).toBeVisible();
+ await expect(row.getByText('Aşama geçmişi (3)',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+});

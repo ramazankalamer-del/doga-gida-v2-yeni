@@ -18,3 +18,5 @@ button.edit-action:hover:not(:disabled){background:#eab308;border-color:#ca8a04}
 button.edit-action:focus-visible{outline-color:#a16207}
 .quick-actions button{background:#28593d;border-color:#28593d;color:#fff}
 .quick-actions button:hover:not(:disabled){background:#18462c;border-color:#18462c}
+
+.order-actions{display:flex;flex-direction:column;align-items:flex-start;gap:8px}.order-actions button{white-space:nowrap}

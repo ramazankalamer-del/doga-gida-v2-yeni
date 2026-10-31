@@ -165,7 +165,7 @@ Bu aşamada ürün bazında kısmi iade, sipariş düzenleme, iskonto ve KDV ayr
 
 Yalnızca Bekliyor durumundaki ve ürün satırları kayıtlı siparişler iptal edilir. Hazırlanıyor, Dağıtımda ve Teslim edildi durumları bu aşamada iptale kapalıdır. Ürün satırı olmayan eski örnek siparişlerde hatalı stok iadesini önlemek için iptal engellenir.
 
-İptal edilen sipariş silinmez; tutarı ve ürün satırları korunur, durumu İptal edildi olur. Neden, İstanbul saat dilimindeki zaman ve işlemi yapan kullanıcının kimliği veritabanına kaydedilir. Siparişin tamamındaki miktarlar stoklara bir kez geri eklenir. İptal edilenler günlük satış ve aktif sipariş sayısından çıkarılır; son siparişlerde durumuyla birlikte görünür. Tahsilat kaydı değiştirilmez.
+İptal edilen sipariş silinmez; tutarı ve ürün satırları korunur, durumu İptal edildi olur. Neden, İstanbul saat dilimindeki zaman ve işlemi yapan kullanıcının kimliği veritabanına kaydedilir. Siparişin tamamındaki miktarlar stoklara bir kez geri eklenir. İptal edilenler günlük satış ve iptal edilmemiş sipariş sayısından çıkarılır; son siparişlerde durumuyla birlikte görünür. Tahsilat kaydı değiştirilmez.
 
 Stok iadesi, durum değişikliği ve iptal kaydı aynı SQLite işlemi içinde, yazma kilidi altında yapılır. Tekrarlanan/eşzamanlı iptal ikinci kez stok eklemez; ilk iptal kaydı döner. Ürün yoksa veya stok üst sınırı aşılacaksa hiçbir değişiklik yapılmaz. İptal edilmiş siparişin eski oluşturma isteğini tekrar göndermek de yeni satış oluşturmaz.
 
@@ -208,3 +208,17 @@ Her kayıt bir sürüm taşır. İki kullanıcı aynı kaydı açarsa ilk başar
 İptal yazma kilidi altında ve güncel yönetici yetkisi yeniden kontrol edilerek yapılır. Tahsilat başına tek iptal kaydı vardır. Tekrarlanan/eşzamanlı istekler ilk iptali döndürür; bakiye ikinci kez değiştirilmez ve ilk neden/zaman korunur. Eski oluşturma isteğini tekrar göndermek iptal edilmiş tahsilatı tekrar etkinleştirmez.
 
 Müşteri veya oluşturma detayı olmayan eski örnek tahsilatlar bu aşamada iptale kapalıdır. Eski kayıtlar aynen korunur. Kısmi tahsilat iptali, iptali geri alma, tahsilat düzenleme ve banka/kart para iadesi bu aşamada yoktur. Yeni iptal tablosu mevcut verileri silmeden oluşturulur.
+
+## Sipariş hazırlık, dağıtım ve teslim aşamaları
+
+**Siparişler** listesindeki sıradaki aşama düğmesini kullanın: **Hazırlığa al → Dağıtıma çıkar → Teslim edildi olarak işaretle**. Her işlemde sipariş/müşteri ve eski/yeni aşama gösterilir; **Aşamayı onayla** ile kaydedilir. Onay öncesinde Vazgeç/Kapat/Escape ile çıkılabilir. Yönetici ve personel ilerletebilir; salt okunur kullanıcılar yalnızca durumu/geçmişi görüntüler.
+
+İzin verilen sıra **Bekliyor → Hazırlanıyor → Dağıtımda → Teslim edildi** şeklindedir. Aşama atlama, geriye alma veya teslim/iptal edilmiş siparişi yeniden ilerletme reddedilir. Bekleyen siparişlerin önceki iptal kuralları korunur; hazırlığa alınan sipariş artık bu akıştan iptal edilemez. Teslim aşaması yalnızca uygulama içi kayıttır; teslim imzası, belge veya harici taşıyıcı işlemi oluşturmaz.
+
+Stok sipariş oluşturulurken düşmüştür. Aşama değişikliği tekrar stok düşmez, ürün sürümünü değiştirmez; sipariş tutarı, müşteri bakiyesi, satış ve tahsilat toplamları değişmez. Panelin son siparişler bölümünde güncel durum görünür.
+
+Her başarılı geçişte önceki/yeni durum, İstanbul saat dilimindeki zaman ve işlemi yapan kullanıcı kaydedilir. Satırdaki **Aşama geçmişi** açılarak görülebilir. Eski örnek siparişler mevcut aşamalarından ilerletilebilir; geçmişleri geriye dönük uydurulmaz, yalnızca yeni işlemler kaydedilir.
+
+İstek kimliği aynı geçişin yeniden/eşzamanlı gönderilmesini tek kayda indirger. Aynı kimlikle farklı işlem reddedilir. İki kullanıcı aynı eski durumdan farklı isteklerle ilerlemeye çalışırsa biri başarılı olur, diğeri güncel listeyi yüklemeye yönlendirilir. Yazma kilidi altında kullanıcı rolü ve mevcut durum yeniden kontrol edilir. İptal ile hazırlığa alma eşzamanlı olduğunda yalnızca biri uygulanır. Aynı eski isteğin daha sonraki bir aşamada tekrar gönderimi güncel siparişi döndürür; siparişi geriye almaz veya tekrar ilerletmez.
+
+Bu aşamada geri geçiş, toplu durum değiştirme, dağıtımdaki/teslim edilmiş sipariş iadesi veya teslim belgesi eklenmedi.
