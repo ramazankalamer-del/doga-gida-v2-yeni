@@ -47,6 +47,8 @@ def initialize():
         CREATE TABLE IF NOT EXISTS order_cancellations(order_id INTEGER PRIMARY KEY REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS collection_cancellations(collection_id INTEGER PRIMARY KEY REFERENCES collections(id), user_id INTEGER NOT NULL REFERENCES users(id), reason TEXT NOT NULL, cancelled_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS order_status_events(id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id), user_id INTEGER NOT NULL REFERENCES users(id), request_id TEXT NOT NULL UNIQUE, from_status TEXT NOT NULL, to_status TEXT NOT NULL, changed_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS stock_tracking(product_id INTEGER PRIMARY KEY REFERENCES products(id), opening_stock INTEGER NOT NULL, tracked_since TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS stock_movements(id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), name TEXT NOT NULL, sku TEXT NOT NULL, kind TEXT NOT NULL, quantity INTEGER NOT NULL, before_stock INTEGER NOT NULL, after_stock INTEGER NOT NULL, user_id INTEGER NOT NULL REFERENCES users(id), order_id INTEGER REFERENCES orders(id), request_id TEXT UNIQUE, note TEXT NOT NULL, created_at TEXT NOT NULL);
         ''')
         columns = {row['name'] for row in db.execute('PRAGMA table_info(orders)')}
         if 'request_id' not in columns:
@@ -70,6 +72,7 @@ def initialize():
             db.executemany('INSERT INTO orders(customer_id,amount_cents,status,date) VALUES(?,?,?,?)',[(1,1280000,'Hazırlanıyor',today()),(2,845000,'Dağıtımda',today()),(3,362500,'Teslim edildi',today()),(4,620000,'Bekliyor',today())])
             db.execute('INSERT INTO collections(amount_cents,date) VALUES(?,?)',(1850000,today()))
             db.execute('INSERT INTO seed_version VALUES(1)')
+        db.execute('INSERT OR IGNORE INTO stock_tracking SELECT id,stock,? FROM products',(datetime.now(ZoneInfo('Europe/Istanbul')).isoformat(),))
 
 @asynccontextmanager
 async def lifespan(app):
@@ -258,6 +261,14 @@ def product_dict(row):
     result['price'] = result.pop('price_cents') / 100
     return result
 
+def record_stock_movement(db, product, before, after, kind, user_id, order_id=None, request_id=None, note=''):
+    if before==after:
+        return None
+    return db.execute('INSERT INTO stock_movements(product_id,name,sku,kind,quantity,before_stock,after_stock,user_id,order_id,request_id,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(product['id'],product['name'],product['sku'],kind,after-before,before,after,user_id,order_id,request_id,note,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat())).lastrowid
+
+def movement_dict(db, movement_id):
+    return dict(db.execute('SELECT m.id,m.product_id,m.name,m.sku,m.kind,m.quantity,m.before_stock,m.after_stock,m.order_id,m.note,m.created_at,u.username FROM stock_movements m JOIN users u ON u.id=m.user_id WHERE m.id=?',(movement_id,)).fetchone())
+
 @app.get('/api/products')
 def products(user=Depends(auth.current_user)):
     with database() as db:
@@ -267,8 +278,13 @@ def products(user=Depends(auth.current_user)):
 def add_product(item: ProductInput, user=Depends(auth.writer)):
     try:
         with database() as db:
+            db.execute('BEGIN IMMEDIATE')
+            require_active_writer(db,user['id'])
             cursor = db.execute('INSERT INTO products(name,sku,category,price_cents,stock,min_stock) VALUES(?,?,?,?,?,?)',(item.name,item.sku.upper(),item.category,int(item.price*100),item.stock,item.min_stock))
-            return product_dict(db.execute('SELECT * FROM products WHERE id=?',(cursor.lastrowid,)).fetchone())
+            product = db.execute('SELECT * FROM products WHERE id=?',(cursor.lastrowid,)).fetchone()
+            db.execute('INSERT INTO stock_tracking VALUES(?,0,?)',(product['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+            record_stock_movement(db,product,0,item.stock,'opening',user['id'],note='Yeni ürün açılışı')
+            return product_dict(product)
     except sqlite3.IntegrityError:
         raise HTTPException(409, 'Bu ürün kodu zaten kullanılıyor.')
 
@@ -281,15 +297,57 @@ def update_product(product_id: int, item: ProductUpdate, user=Depends(auth.write
         with database() as db:
             db.execute('BEGIN IMMEDIATE')
             require_active_writer(db,user['id'])
-            row = db.execute('SELECT version FROM products WHERE id=?',(product_id,)).fetchone()
+            row = db.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone()
             if not row:
                 raise HTTPException(404, 'Ürün bulunamadı.')
             if row['version']!=item.expected_version:
                 raise HTTPException(409, 'Kayıt başka bir işlemde değişti. Güncel listeyi yükleyip yeniden deneyin.')
             db.execute('UPDATE products SET name=?,sku=?,category=?,price_cents=?,stock=?,min_stock=?,version=version+1 WHERE id=?',(item.name,item.sku.upper(),item.category,int(item.price*100),item.stock,item.min_stock,product_id))
-            return product_dict(db.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone())
+            product = db.execute('SELECT * FROM products WHERE id=?',(product_id,)).fetchone()
+            record_stock_movement(db,product,row['stock'],item.stock,'correction',user['id'],note='Ürün düzenleme ekranından stok düzeltmesi')
+            return product_dict(product)
     except sqlite3.IntegrityError:
         raise HTTPException(409, 'Bu ürün kodu zaten kullanılıyor.')
+
+class StockReceiptInput(BaseModel):
+    product_id: int = Field(gt=0, strict=True)
+    quantity: int = Field(gt=0, le=10000000, strict=True)
+    note: str = Field(min_length=3, max_length=300)
+    request_id: UUID
+
+    @field_validator('note', mode='before')
+    @classmethod
+    def trim(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+@app.get('/api/stock-ledger')
+def stock_ledger(user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN')
+        products = [dict(row) for row in db.execute('''SELECT p.id,p.name,p.sku,p.stock,t.opening_stock,t.tracked_since,COALESCE(m.delta,0) net_change
+          FROM products p JOIN stock_tracking t ON t.product_id=p.id
+          LEFT JOIN (SELECT product_id,SUM(quantity) delta FROM stock_movements GROUP BY product_id) m ON m.product_id=p.id ORDER BY p.id DESC''')]
+        movements = [movement_dict(db,row['id']) for row in db.execute('SELECT id FROM stock_movements ORDER BY id DESC')]
+        return {'products':products,'movements':movements}
+
+@app.post('/api/stock-receipts', status_code=201)
+def add_stock_receipt(item: StockReceiptInput, user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        previous = db.execute('SELECT * FROM stock_movements WHERE request_id=?',(str(item.request_id),)).fetchone()
+        if previous:
+            if previous['kind']!='receipt' or previous['product_id']!=item.product_id or previous['quantity']!=item.quantity or previous['note']!=item.note or previous['user_id']!=user['id']:
+                raise HTTPException(409, 'Bu stok giriş isteği daha önce farklı bilgilerle kullanılmış.')
+            return movement_dict(db,previous['id'])
+        product = db.execute('SELECT * FROM products WHERE id=?',(item.product_id,)).fetchone()
+        if not product:
+            raise HTTPException(404, 'Ürün bulunamadı.')
+        if product['stock']+item.quantity>10000000:
+            raise HTTPException(409, 'Stok üst sınırı aşılıyor. En fazla 10.000.000 adet olabilir.')
+        db.execute('UPDATE products SET stock=stock+?,version=version+1 WHERE id=?',(item.quantity,item.product_id))
+        movement_id = record_stock_movement(db,product,product['stock'],product['stock']+item.quantity,'receipt',user['id'],request_id=str(item.request_id),note=item.note)
+        return movement_dict(db,movement_id)
 
 class OrderLine(BaseModel):
     product_id: int = Field(gt=0, strict=True)
@@ -353,6 +411,7 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
         cursor = db.execute('INSERT INTO orders(customer_id,amount_cents,status,date,request_id,created_by) VALUES(?,?,?,?,?,?)',(item.customer_id,total,'Bekliyor',today(),str(item.request_id),user['id']))
         for line,product in products:
             db.execute('UPDATE products SET stock=stock-?,version=version+1 WHERE id=?',(line.quantity,line.product_id))
+            record_stock_movement(db,product,product['stock'],product['stock']-line.quantity,'order',user['id'],order_id=cursor.lastrowid,note='Sipariş oluşturma')
             db.execute('INSERT INTO order_items(order_id,product_id,name,sku,quantity,price_cents) VALUES(?,?,?,?,?,?)',(cursor.lastrowid,line.product_id,product['name'],product['sku'],line.quantity,product['price_cents']))
         return order_dict(db,cursor.lastrowid)
 
@@ -408,12 +467,16 @@ def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.write
         lines = db.execute('SELECT product_id,quantity FROM order_items WHERE order_id=?',(order_id,)).fetchall()
         if not lines:
             raise HTTPException(409, 'Ürün detayı olmayan eski örnek siparişler iptal edilemez.')
+        restored_products = {}
         for line in lines:
-            product = db.execute('SELECT stock FROM products WHERE id=?',(line['product_id'],)).fetchone()
+            product = db.execute('SELECT * FROM products WHERE id=?',(line['product_id'],)).fetchone()
             if not product or product['stock']+line['quantity']>10000000:
                 raise HTTPException(409, 'Stok iadesi yapılamadı. Ürün kayıtlarını kontrol edin.')
+            restored_products[line['product_id']] = product
         for line in lines:
             db.execute('UPDATE products SET stock=stock+?,version=version+1 WHERE id=?',(line['quantity'],line['product_id']))
+            product = restored_products[line['product_id']]
+            record_stock_movement(db,product,product['stock'],product['stock']+line['quantity'],'cancellation',user['id'],order_id=order_id,note=item.reason)
         db.execute("UPDATE orders SET status='İptal edildi' WHERE id=?",(order_id,))
         db.execute('INSERT INTO order_cancellations VALUES(?,?,?,?)',(order_id,user['id'],item.reason,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
         return order_dict(db,order_id)

@@ -189,7 +189,7 @@ Bu aşamada açılış bakiyesi, eski tahsilatları müşteriye eşleştirme, ge
 
 Müşteriler veya Ürünler ve stok listesindeki kaydın **Düzenle** düğmesine basın. Mevcut bilgiler forma gelir; değişikliklerden sonra **Kaydet** seçin. Yönetici ve personel düzenleyebilir; salt okunur kullanıcıda düğme görünmez ve sunucu isteği reddeder. Kayıt silme eklenmedi.
 
-Müşterinin firma adı, yetkilisi, telefonu ve bölgesi; ürünün adı, kodu, kategorisi, fiyatı, stok adedi ve kritik stok eşiği düzenlenebilir. Ürün kodunun benzersizliği ve mevcut alan doğrulamaları korunur. Stok alanına işlem sonrası toplam adet yazılır; girilen sayı stoğa eklenen miktar değildir. Bu işlem manuel stok düzeltmesidir; ayrı stok hareketi geçmişi bu aşamada yoktur.
+Müşterinin firma adı, yetkilisi, telefonu ve bölgesi; ürünün adı, kodu, kategorisi, fiyatı, stok adedi ve kritik stok eşiği düzenlenebilir. Ürün kodunun benzersizliği ve mevcut alan doğrulamaları korunur. Stok alanına işlem sonrası toplam adet yazılır; girilen sayı stoğa eklenen miktar değildir. Bu işlem manuel stok düzeltmesidir; takip başladıktan sonra fark, hareket geçmişine kaydedilir.
 
 Her kayıt bir sürüm taşır. İki kullanıcı aynı kaydı açarsa ilk başarılı güncelleme sürümü artırır; ikinci eski form 409 hatasıyla reddedilir. Sipariş oluşturma ve iptal/stok iadesi de ürünün sürümünü artırır. Böylece eski bir ürün formu yeni stok hareketinin üzerine yazamaz. **Güncel listeyi yükle** düğmesi formu kapatır ve listeyi yeniler; sonra Düzenle ile güncel kayıt yeniden açılır. Hatalı güncelleme veya mükerrer kodda kayıt değişmez.
 
@@ -222,3 +222,17 @@ Her başarılı geçişte önceki/yeni durum, İstanbul saat dilimindeki zaman v
 İstek kimliği aynı geçişin yeniden/eşzamanlı gönderilmesini tek kayda indirger. Aynı kimlikle farklı işlem reddedilir. İki kullanıcı aynı eski durumdan farklı isteklerle ilerlemeye çalışırsa biri başarılı olur, diğeri güncel listeyi yüklemeye yönlendirilir. Yazma kilidi altında kullanıcı rolü ve mevcut durum yeniden kontrol edilir. İptal ile hazırlığa alma eşzamanlı olduğunda yalnızca biri uygulanır. Aynı eski isteğin daha sonraki bir aşamada tekrar gönderimi güncel siparişi döndürür; siparişi geriye almaz veya tekrar ilerletmez.
 
 Bu aşamada geri geçiş, toplu durum değiştirme, dağıtımdaki/teslim edilmiş sipariş iadesi veya teslim belgesi eklenmedi.
+
+## Stok girişleri ve hareket geçmişi
+
+Menüde **Stok hareketleri → Stok girişi ekle** seçin. Ürün, eklenecek pozitif tam adet ve 3–300 karakterlik açıklama girilir. Girilen miktar mevcut stoğa eklenir; toplam stok 10.000.000 adedi geçemez. Yönetici ve personel giriş yapabilir, salt okunur kullanıcı yalnızca görüntüler. Bu kayıt satın alma faturası veya tedarikçi borcu oluşturmaz.
+
+Ürüne göre filtre hem stok özetini hem hareket listesini süzer. Güncel stok, takip başlangıç stoğu ve kayıtlı hareketlerin net değişimi birlikte gösterilir. **Güncel stok = takip başlangıç stoğu + kayıtlı net hareket** kuralı geçerlidir. İlk güncellemede mevcut stoklar başlangıç kabul edilir; geçmiş siparişleri yeniden işleyerek stok değiştirilmez ve eski hareketler uydurulmaz.
+
+Takip başladıktan sonra yeni ürünün pozitif açılış stoğu, stok girişi, sipariş çıkışı, sipariş iptal iadesi ve ürün düzenleme ekranından yapılan stok düzeltmesi kaydedilir. Her harekette ürün adı/kodu o andaki haliyle, miktar farkı, önceki/sonraki stok, İstanbul saatinde zaman, kullanıcı, açıklama ve varsa sipariş numarası bulunur. Sıfır stokla ürün açılması veya yalnızca fiyat/ad değişikliği miktar hareketi üretmez. Aşama ilerletme ve tahsilat işlemleri stok hareketi oluşturmaz.
+
+Ürünler ve stok ekranındaki stok alanı hâlâ işlem sonrası toplam adettir; örneğin 10'dan 7'ye düzeltme -3 hareketi üretir. Stok girişi ekranındaki 7 ise mevcut stoğa +7 ekler. Manuel düzeltme hareketinde açıklama kaynağı ürün düzenleme ekranı olarak saklanır; ayrı neden alanı bu aşamada eklenmedi.
+
+Stok ve hareket kaydı aynı SQLite işlemi içinde yazılır; hareket kaydı hatasında stok değişikliği geri alınır. Giriş, ürün sürümünü artırır ve eski düzenleme formlarının üzerine yazmasını engeller. Tekrarlanan/eşzamanlı aynı giriş tek hareket oluşturur; farklı girişlerin miktarları kaybolmadan toplanır. Sipariş ve iptal tekrarları hareketi ikinci kez üretmez.
+
+Hareket kayıtlarını düzenleme/silme, stok girişini iptal etme, depo/parti/son kullanma tarihi takibi, tedarikçi hesabı ve geçmişe dönük hareket oluşturma bu aşamada yoktur. Başlangıç kaydı mevcut stok durumudur; geçmiş bir fiziksel teslimatı temsil etmez.
