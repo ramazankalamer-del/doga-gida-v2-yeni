@@ -2,6 +2,7 @@ import {useEffect,useMemo,useRef,useState} from 'react';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {LocationLink} from './CustomerLocation';
+import CustomerActions,{routeDayLabel,type CustomerAction} from './CustomerActions';
 import {filterMapCustomers,groupMapCustomers,hasCoordinates,type MapCustomer,type LocatedCustomer,type LocationFilter} from './customerMapData';
 
 function CustomerMapCanvas({customers,selectedId,onSelect}:{customers:LocatedCustomer[];selectedId:number|null;onSelect:(id:number)=>void}){
@@ -57,7 +58,7 @@ function CustomerMapCanvas({customers,selectedId,onSelect}:{customers:LocatedCus
  </div>;
 }
 
-export default function CustomerMap({customers,loading,error,canWrite,onEdit,onRetry}:{customers:MapCustomer[];loading:boolean;error:string;canWrite:boolean;onEdit:(customer:MapCustomer)=>void;onRetry:()=>void}){
+export default function CustomerMap({customers,loading,error,canWrite,onEdit,onAction,onRetry}:{customers:MapCustomer[];loading:boolean;error:string;canWrite:boolean;onEdit:(customer:MapCustomer)=>void;onAction:(action:CustomerAction,customer:MapCustomer)=>void;onRetry:()=>void}){
  const [query,setQuery]=useState(''),[filter,setFilter]=useState<LocationFilter>('all'),[selectedId,setSelectedId]=useState<number|null>(null);
  const [mapVersion,setMapVersion]=useState(0);
  const filtered=useMemo(()=>filterMapCustomers(customers,query,filter),[customers,query,filter]);
@@ -76,7 +77,7 @@ export default function CustomerMap({customers,loading,error,canWrite,onEdit,onR
      {located.length>0&&<p className="map-caption">{located.length} müşteri haritada. Aynı GPS noktasındaki müşteriler tek işarette gruplanır. Görüntülenen bölgenin harita görselleri OpenStreetMap’ten yüklenir; internet bağlantısı gerekir.</p>}
     </div><aside className="map-customer-list" aria-label="Harita müşteri listesi">
      <div className="map-list-title"><h2>Müşteriler</h2><span className="count">{filtered.length} kayıt</span></div>
-     {selected&&<section className="map-selected" aria-label="Seçilen müşteri bilgileri"><h3>{selected.name}</h3><p>{selected.contact} · {selected.district}</p><p>{selected.phone||'Telefon belirtilmedi'}</p><LocationLink latitude={selected.latitude} longitude={selected.longitude}/>{canWrite&&<button className="secondary" onClick={()=>onEdit(selected)}>Müşteri kartını düzenle</button>}<button className="text-button" onClick={()=>setSelectedId(null)}>Seçimi kaldır</button></section>}
+     {selected&&<section className="map-selected" aria-label="Seçilen müşteri bilgileri"><h3>{selected.name}</h3><p>{selected.contact} · {selected.district}</p><p>{selected.phone||'Telefon belirtilmedi'}</p><p>{routeDayLabel(selected.route_days)}</p><CustomerActions canWrite={canWrite} onAction={action=>onAction(action,selected)}/><LocationLink latitude={selected.latitude} longitude={selected.longitude}/>{canWrite&&<button className="secondary" onClick={()=>onEdit(selected)}>Müşteri kartını düzenle</button>}<button className="text-button" onClick={()=>setSelectedId(null)}>Seçimi kaldır</button></section>}
      <div className="map-list-scroll">{filtered.map(customer=><button key={customer.id} className={'map-customer-row'+(selected?.id===customer.id?' selected':'')} aria-pressed={selected?.id===customer.id} onClick={()=>setSelectedId(customer.id)}><strong>{customer.name}</strong><span>{customer.district} · {customer.contact}</span><small className={'badge '+(hasCoordinates(customer)?'green':'amber')}>{hasCoordinates(customer)?'GPS kayıtlı':'Konum eksik'}</small></button>)}</div>
      {!filtered.length&&<p className="empty">Gösterilecek müşteri yok.</p>}
     </aside></div>

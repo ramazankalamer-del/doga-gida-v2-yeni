@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import os
 import sqlite3
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Annotated
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
@@ -16,6 +16,7 @@ import secrets
 import time
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
+from customer_statement import build_statement
 
 DB_PATH = os.getenv('DATABASE_PATH', str(Path(__file__).with_name('data') / 'doga.db'))
 
@@ -41,7 +42,8 @@ def backup_before_feature_migration():
     with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as source:
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns):
+        has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -83,6 +85,9 @@ def initialize():
             if 'version' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
                 db.execute(f'ALTER TABLE {table} ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
         customer_columns = {row['name'] for row in db.execute('PRAGMA table_info(customers)')}
+        db.execute('''CREATE TABLE IF NOT EXISTS customer_route_days(
+            customer_id INTEGER NOT NULL REFERENCES customers(id),weekday INTEGER NOT NULL CHECK(weekday BETWEEN 1 AND 7),
+            PRIMARY KEY(customer_id,weekday))''')
         for column in ('latitude', 'longitude'):
             if column not in customer_columns:
                 db.execute(f'ALTER TABLE customers ADD COLUMN {column} REAL')
@@ -228,7 +233,17 @@ def update_user(user_id: int, item: UserUpdate, user=Depends(auth.administrator)
             db.execute('DELETE FROM sessions WHERE user_id=?', (user_id,))
         return {'id':target['id'], 'username':target['username'], 'role':item.role, 'active':int(item.active)}
 
-class CustomerInput(BaseModel):
+class RouteDaysInput(BaseModel):
+    route_days: list[Annotated[int, Field(ge=1,le=7,strict=True)]] = Field(default_factory=list,max_length=7)
+
+    @field_validator('route_days')
+    @classmethod
+    def unique_days(cls,days):
+        if len(days)!=len(set(days)):
+            raise ValueError('Rota günleri tekrarlanamaz.')
+        return sorted(days)
+
+class CustomerInput(RouteDaysInput):
     name: str = Field(min_length=2, max_length=120)
     contact: str = Field(min_length=2, max_length=100)
     phone: str = Field(default='', max_length=25)
@@ -271,7 +286,14 @@ def health():
 @app.get('/api/customers')
 def customers(user=Depends(auth.current_user)):
     with database() as db:
-        return [dict(row) for row in db.execute('SELECT * FROM customers ORDER BY id DESC')]
+        return [customer_dict(db,row) for row in db.execute('SELECT * FROM customers ORDER BY id DESC')]
+
+def customer_dict(db,row):
+    return {**dict(row),'route_days':[day['weekday'] for day in db.execute('SELECT weekday FROM customer_route_days WHERE customer_id=? ORDER BY weekday',(row['id'],))]}
+
+def save_route_days(db,customer_id,days):
+    db.execute('DELETE FROM customer_route_days WHERE customer_id=?',(customer_id,))
+    db.executemany('INSERT INTO customer_route_days VALUES(?,?)',[(customer_id,day) for day in days])
 
 @app.post('/api/customers', status_code=201)
 def add_customer(item: CustomerInput, user=Depends(auth.writer)):
@@ -279,6 +301,7 @@ def add_customer(item: CustomerInput, user=Depends(auth.writer)):
         db.execute('BEGIN IMMEDIATE')
         require_active_writer(db,user['id'])
         cursor = db.execute('INSERT INTO customers(name,contact,phone,district,latitude,longitude) VALUES(?,?,?,?,?,?)', (item.name,item.contact,item.phone,item.district,item.latitude,item.longitude))
+        save_route_days(db,cursor.lastrowid,item.route_days)
         return {'id':cursor.lastrowid, 'version':0, **item.model_dump()}
 
 class CustomerUpdate(CustomerInput):
@@ -302,7 +325,38 @@ def update_customer(customer_id: int, item: CustomerUpdate, user=Depends(auth.wr
         latitude = item.latitude if 'latitude' in item.model_fields_set else row['latitude']
         longitude = item.longitude if 'longitude' in item.model_fields_set else row['longitude']
         db.execute('UPDATE customers SET name=?,contact=?,phone=?,district=?,latitude=?,longitude=?,version=version+1 WHERE id=?',(item.name,item.contact,item.phone,item.district,latitude,longitude,customer_id))
-        return dict(db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
+        if 'route_days' in item.model_fields_set:
+            save_route_days(db,customer_id,item.route_days)
+        return customer_dict(db,db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
+
+class RouteDaysUpdate(RouteDaysInput):
+    route_days: list[Annotated[int, Field(ge=1,le=7,strict=True)]] = Field(max_length=7)
+    expected_version: int = Field(ge=0,strict=True)
+
+@app.post('/api/customers/{customer_id}/route-days')
+def update_route_days(customer_id:int,item:RouteDaysUpdate,user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        row=db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone()
+        if not row:
+            raise HTTPException(404,'Müşteri bulunamadı.')
+        if row['version']!=item.expected_version:
+            raise HTTPException(409,'Müşteri kartı değişti. Güncel kartı yükleyip yeniden deneyin.')
+        save_route_days(db,customer_id,item.route_days)
+        db.execute('UPDATE customers SET version=version+1 WHERE id=?',(customer_id,))
+        return customer_dict(db,db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
+
+@app.get('/api/customers/{customer_id}/statement')
+def customer_statement(customer_id:int,start_date:date|None=None,end_date:date|None=None,user=Depends(auth.current_user)):
+    if start_date and end_date and start_date>end_date:
+        raise HTTPException(422,'Başlangıç tarihi bitiş tarihinden sonra olamaz.')
+    with database() as db:
+        db.execute('BEGIN')
+        customer=db.execute('SELECT id,name,contact,phone,district FROM customers WHERE id=?',(customer_id,)).fetchone()
+        if not customer:
+            raise HTTPException(404,'Müşteri bulunamadı.')
+        return build_statement(db,customer,start_date,end_date)
 
 def product_dict(row):
     result = dict(row)

@@ -1,4 +1,4 @@
-export type MapCustomer = {id:number;version:number;name:string;contact:string;phone:string;district:string;latitude:number|null;longitude:number|null};
+export type MapCustomer = {id:number;version:number;name:string;contact:string;phone:string;district:string;latitude:number|null;longitude:number|null;route_days:number[]};
 export type LocatedCustomer = MapCustomer & {latitude:number;longitude:number};
 export type LocationFilter = 'all'|'located'|'missing';
 

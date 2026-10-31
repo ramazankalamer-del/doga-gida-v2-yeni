@@ -5,6 +5,39 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 
 ## Özellikler
 
+### Müşteri kartı kısayolları, ekstre ve rota günleri
+
+Müşteri listesi, kayıt düzenleme kartı ve haritada seçilen müşteri üzerinde
+**Hesap ekstresi**, **Satış yap**, **Tahsilat al** ve **Rota günü** kısayolları
+bulunur. Satış ve tahsilat kısayolları mevcut formları seçilen müşteriyle açar;
+düğmeye basmak tek başına kayıt oluşturmaz. Satış mevcut sipariş akışını
+kullanır (Merkez stoğu kayıt anında düşer); fatura kesmez. Tahsilat para çekmez,
+yalnızca kayıt tutar. Kartta kaydedilmemiş değişiklikler bu kısayollarla uygulanmaz.
+
+Ekstre salt okunurdur; admin, staff ve viewer erişebilir. Tarih aralığına göre
+devir bakiyesi, dönem borç/alacak toplamları, dönem sonu ve güncel hesap bakiyesi
+ayrı gösterilir. Siparişler borç, tahsilatlar alacak; sipariş iptalleri alacak,
+tahsilat iptalleri borç ters hareketidir. İptaller kayıt tarihindeki asıl hareketi
+silmez; iptal tarihindeki ters hareketle dengelenir. İptal tarihi İstanbul gününe
+çevrilir. Aynı gün hareketleri sipariş, tahsilat, sipariş iptali ve tahsilat iptali
+sırasıyla; kendi içinde kayıt numarasıyla gösterilir. Saat sırası iddia edilmez.
+Para hesapları kuruş cinsinden tamsayıdır. Müşteriye bağlı olmayan eski
+tahsilatlar ekstreye eklenmez. İptal tarihi eksik eski iptal edilmiş siparişler
+etkisiz satır olarak açıklanır; yapay iptal tarihi oluşturulmaz.
+
+Rota günü seçiminde Pazartesi–Pazar arasından birden fazla gün seçilebilir;
+**Günleri temizle** ve ardından Kaydet ziyaret günlerini kaldırır, müşteriyi silmez.
+Rota günleri müşteri kartının sürümüne bağlıdır: eski kartla yazma 409 ile
+reddedilir. GPS veya diğer kart alanları bu kısayoldan değişmez. Eski istemciler
+rota günlerini göndermediğinde mevcut günler korunur. Admin/staff günleri
+değiştirebilir; viewer günleri ve ekstreyi görür, satış/tahsilat/rota yazma
+düğmelerini kullanamaz. Şema geçişi önce SQLite yedeği alır. Gün seçimi ziyaret
+planıdır; otomatik rota optimizasyonu veya bildirim oluşturmaz.
+
+API: `GET /api/customers/{id}/statement?start_date=2026-10-01&end_date=2026-10-31`
+ve `POST /api/customers/{id}/route-days` (`route_days`: 1–7 arası benzersiz günler,
+`expected_version`: güncel müşteri sürümü). Geçersiz tarihler/günler reddedilir.
+
 ### Müşteri GPS konumu
 
 **Müşteri haritası** menüsü GPS kaydı bulunan müşterileri etkileşimli haritada

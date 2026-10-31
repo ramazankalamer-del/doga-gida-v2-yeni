@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {hasCoordinates,filterMapCustomers,groupMapCustomers} from '../src/customerMapData.ts';
 
-const customer=(id,latitude,longitude,changes={})=>({id,version:0,name:`Örnek Market ${id}`,contact:'Örnek Yetkili',phone:'',district:'Kadıköy',latitude,longitude,...changes});
+const customer=(id,latitude,longitude,changes={})=>({id,version:0,name:`Örnek Market ${id}`,contact:'Örnek Yetkili',phone:'',district:'Kadıköy',latitude,longitude,route_days:[],...changes});
 
 test('missing and invalid positions never become a pin at zero',()=>{
  for(const [lat,lon] of [[null,null],[null,29],[41,null],[undefined,29],[NaN,29],[41,Infinity],[91,29],[41,-181],['41','29']]){
