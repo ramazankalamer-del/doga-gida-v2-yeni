@@ -18,6 +18,30 @@ Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi
 
 ## Gereksinimler
 
+### Windows'ta kolay açılış
+
+Proje klasöründeki **BASLAT.bat** dosyasını çift tıklayın. Python 3.12+ gerekir.
+İlk kaynak kurulumunda Node.js 22.12+ ve internet bağlantısı da gerekir.
+Başlatıcı sanal ortamı ve bağımlılıkları hazırlar; derlenmiş arayüz yoksa
+`npm ci` ve `npm run build` çalıştırır. İlk yönetici yoksa kullanıcı adı
+ve gizli parola ister. Ardından tarayıcıyı açar. Pencere açık kalmalıdır;
+kapatmak için Ctrl+C kullanın.
+
+8000 portu doluysa mevcut işlemi kapatmadan 8010–8020 arasından boş port seçer;
+doğru adres terminalde yazılır. Her açılışta mevcut V2 SQLite dosyasının
+tutarlı yedeği `yedekler/` içine alınır. Yerel HTTP oturumu için
+`COOKIE_SECURE=0` yalnızca bu başlatıcının alt sürecine uygulanır;
+sunucu yalnızca `127.0.0.1` adresini dinler.
+
+Kaynakları güncelledikten sonra `python baslat.py --rebuild` çalıştırın.
+İsteğe bağlı `--port 8015` ve `--no-browser` seçenekleri vardır.
+Bu depo V2 veritabanını (`backend/data/doga.db`) kullanır; eski
+`doga_gida_dev.db` dosyasını bunun üzerine kopyalamayın. Eski paketin
+verilerini V2'ye aktarma ayrı bir işlemdir.
+
+Arayüz derlenmeden backend elle başlatılırsa ana sayfa artık 404 yerine
+kurulum adımlarını gösterir (HTTP 503); `/api/health` ve `/docs` çalışır.
+
 Python 3.12+ ve Node.js 22.12+ (bu ortamda Python 3.12 ve Node.js 24 kullanıldı).
 Aşağıdaki komutları proje kökünde çalıştırın:
 
@@ -236,3 +260,4 @@ Takip başladıktan sonra yeni ürünün pozitif açılış stoğu, stok girişi
 Stok ve hareket kaydı aynı SQLite işlemi içinde yazılır; hareket kaydı hatasında stok değişikliği geri alınır. Giriş, ürün sürümünü artırır ve eski düzenleme formlarının üzerine yazmasını engeller. Tekrarlanan/eşzamanlı aynı giriş tek hareket oluşturur; farklı girişlerin miktarları kaybolmadan toplanır. Sipariş ve iptal tekrarları hareketi ikinci kez üretmez.
 
 Hareket kayıtlarını düzenleme/silme, stok girişini iptal etme, depo/parti/son kullanma tarihi takibi, tedarikçi hesabı ve geçmişe dönük hareket oluşturma bu aşamada yoktur. Başlangıç kaydı mevcut stok durumudur; geçmiş bir fiziksel teslimatı temsil etmez.
+

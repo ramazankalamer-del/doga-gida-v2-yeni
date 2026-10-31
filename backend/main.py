@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 import auth
 import secrets
 import time
@@ -560,3 +560,15 @@ def dashboard(user=Depends(auth.current_user)):
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 if DIST.exists():
     app.mount('/', StaticFiles(directory=DIST, html=True), name='frontend')
+else:
+    @app.get('/', response_class=HTMLResponse, include_in_schema=False)
+    def frontend_missing():
+        return HTMLResponse('''<!doctype html><html lang="tr"><meta charset="utf-8">
+        <title>Doğa Gıda — kurulum gerekli</title>
+        <h1>Arayüz henüz hazırlanmadı</h1>
+        <p>Sunucu çalışıyor. Programı kapatıp proje klasöründeki
+        <strong>BASLAT.bat</strong> dosyasını açın; arayüz hazırlanacaktır.</p>
+        <p>Elle kurulum: frontend klasöründe <code>npm ci</code>, ardından
+        <code>npm run build</code> çalıştırıp sunucuyu yeniden başlatın.</p>
+        <p><a href="/docs">API dokümantasyonu</a></p></html>''', status_code=503)
+
