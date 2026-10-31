@@ -1,0 +1,42 @@
+.venv/
+__pycache__/
+.pytest_cache/
+backend/data/
+node_modules/
+dist/
+*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+
+# Yerel ayarlar ve gizli bilgiler
+.env
+.env.*
+*.env
+*.env.*
+.envrc
+secrets/
+credentials/
+*credentials*.json
+*service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+
+# SQLite ve yedekleri (tüm konumlar)
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db.bak
+*.sqlite.bak
+*.sqlite3.bak
+
+# Yerel çıktılar
+*.log
+.DS_Store
