@@ -434,4 +434,13 @@ Yönetici hatalı hareketi gerekçe yazarak iptal edebilir. Asıl satır ve ipta
 
 Her yeni kayıt istek kimliğiyle tekrar gönderimlere karşı korunur; aynı kimlikte farklı içerik reddedilir. Yazma kilidi altında yetki ve kasa bakiyesi yeniden kontrol edilir. İki eşzamanlı çıkış kasayı aşamaz. Şema eklenmeden önce eski veritabanı yedeklenir.
 
-Bu ilk sürüm mevcut müşteri tahsilatlarını hesaplara bağlamaz, eski tahsilatları aktarmadan başlar. Manuel para girişleri müşteri borcunu azaltmaz; iki modülde aynı parayı tekrar kaydetmemeye dikkat edilmelidir. Bankaya bağlanma/para gönderme, otomatik banka hareketi, virman, döviz, vergi/KDV, gider belgesi veya tedarikçi borcu işlemleri bu aşamada yoktur. Bu ekran Bizim Hesap'ın birebir kopyası olarak sunulmaz; referans ekranlarla eşleştirme ayrı çalışmadır.
+
+## Tahsilat hesabı, hesaplar arası aktarım ve gider kategorileri
+
+**Tahsilat ekle → Tahsilat hesabı** alanında kasa/banka seçilirse müşteri tahsilatı ve ilgili hesaba giriş tek işlemde kaydedilir. Hesap seçimi isteğe bağlıdır; **Hesaba bağlama** yalnızca müşteri tahsilatı oluşturur. Eski kayıtlar otomatik hesaplara taşınmaz. Bağlı tahsilatın finans hareketi ayrı iptal edilemez; tahsilat ekranından iptal edildiğinde hem müşteri borcu hem hesap bakiyesi birlikte geri alınır. Harcanmış bir kasa tahsilatının iptali güncel bakiyeyi negatife düşürecekse işlem reddedilir. Aynı isteğin tekrar gönderimi ikinci giriş oluşturmaz; başka hesaba aynı istek kimliğiyle yeniden gönderim reddedilir.
+
+**Kasa, banka ve giderler → Hesaplar arası aktarım** bölümünde kaynak, hedef, tutar, tarih ve açıklama seçilir. Kaynak çıkışı, hedef girişi ve aktarım bağlantısı tek işlemde kaydedilir. İki hesap farklı olmalıdır. Kasa kaynak bakiyesi kontrol edilir. Yönetici hareket listesindeki aktarımın herhangi bir ayağından iptal açtığında iki ayak birlikte iptal edilir; tek ayağı ayrı iptal edilemez. Hedef kasadaki para harcanmışsa iptal her iki hesaba da uygulanmadan reddedilir. Aktarım gerçek bankaya talimat göndermez, kayıt tutar.
+
+Aktarımlar **Giriş / Gider / Diğer çıkış** dönem toplamlarına dahil edilmez; aktarım giriş/çıkışı ayrıca gösterilir. Tahsilatlar ise hesaba gerçek giriş olarak gelir. **Gider kategorileri** tablosu seçili hesap/tarih aralığındaki iptal edilmemiş tüm giderleri (hareket sayfasından bağımsız) kategori, kayıt sayısı, tutar ve yüzde payıyla gösterir. İptaller, tahsilatlar ve aktarımlar gider raporuna girmez. Mevcut kategori metinleriyle gruplanır; büyük/küçük harfi farklı yazılan kategoriler ayrı gruplardır. Hesap bakiyeleri her zaman günceldir ve tarih filtresinden bağımsızdır.
+
+Manuel para girişleri müşteri borcunu değiştirmez. Tahsilat hesabı seçilmişse aynı parayı ayrıca manuel giriş olarak kaydetmeyin. Döviz, vergi/KDV, banka bağlantısı, tedarikçi borcu ve gider belgesi bu sürüme dahil değildir.

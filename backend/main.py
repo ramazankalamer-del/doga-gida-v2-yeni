@@ -43,7 +43,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations')) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers')) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -113,6 +113,14 @@ def initialize():
             request_id TEXT NOT NULL UNIQUE,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS finance_cancellations(
             entry_id INTEGER PRIMARY KEY REFERENCES finance_entries(id),reason TEXT NOT NULL,user_id INTEGER NOT NULL REFERENCES users(id),cancelled_at TEXT NOT NULL);''')
+        db.executescript('''CREATE TABLE IF NOT EXISTS collection_finance_links(
+            collection_id INTEGER PRIMARY KEY REFERENCES collections(id),entry_id INTEGER NOT NULL UNIQUE REFERENCES finance_entries(id));
+        CREATE TABLE IF NOT EXISTS finance_transfers(
+            id INTEGER PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,source_account_id INTEGER NOT NULL REFERENCES finance_accounts(id),
+            target_account_id INTEGER NOT NULL REFERENCES finance_accounts(id),amount_cents INTEGER NOT NULL CHECK(amount_cents>0),
+            date TEXT NOT NULL,note TEXT NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,
+            source_entry_id INTEGER NOT NULL UNIQUE REFERENCES finance_entries(id),target_entry_id INTEGER NOT NULL UNIQUE REFERENCES finance_entries(id),
+            CHECK(source_account_id!=target_account_id));''')
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -550,6 +558,10 @@ def finance_entry_dict(db,entry_id):
     row=dict(db.execute('SELECT e.*,a.name account_name,u.username FROM finance_entries e JOIN finance_accounts a ON a.id=e.account_id JOIN users u ON u.id=e.created_by WHERE e.id=?',(entry_id,)).fetchone())
     cancel=db.execute('SELECT x.reason,x.cancelled_at,u.username FROM finance_cancellations x JOIN users u ON u.id=x.user_id WHERE entry_id=?',(entry_id,)).fetchone()
     row['cancellation']=dict(cancel) if cancel else None
+    link=db.execute('SELECT collection_id FROM collection_finance_links WHERE entry_id=?',(entry_id,)).fetchone()
+    transfer=db.execute('SELECT id FROM finance_transfers WHERE source_entry_id=? OR target_entry_id=?',(entry_id,entry_id)).fetchone()
+    row['collection_id']=link['collection_id'] if link else None
+    row['transfer_id']=transfer['id'] if transfer else None
     return row
 
 @app.get('/api/finance')
@@ -565,9 +577,11 @@ def list_finance(account_id:int|None=None,start_date:date|None=None,end_date:dat
         if end_date: clauses.append('e.date<=?');params.append(end_date.isoformat())
         where=' AND '.join(clauses)
         total=db.execute(f'SELECT COUNT(*) FROM finance_entries e WHERE {where}',params).fetchone()[0]
-        sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) GROUP BY e.kind',params)}
+        sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND NOT EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
+        categories=[dict(row) for row in db.execute(f"SELECT e.category,COUNT(*) count,SUM(e.amount_cents) amount_cents FROM finance_entries e WHERE {where} AND e.kind='expense' AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) GROUP BY e.category ORDER BY amount_cents DESC,e.category",params)]
+        transfer_sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
         entries=[finance_entry_dict(db,row['id']) for row in db.execute(f'SELECT e.id FROM finance_entries e WHERE {where} ORDER BY e.date DESC,e.id DESC LIMIT 50 OFFSET ?',[*params,offset])]
-        return {'accounts':accounts,'entries':entries,'total':total,'offset':offset,'income_cents':sums.get('income',0),'expense_cents':sums.get('expense',0),'withdrawal_cents':sums.get('withdrawal',0)}
+        return {'accounts':accounts,'entries':entries,'total':total,'offset':offset,'income_cents':sums.get('income',0),'expense_cents':sums.get('expense',0),'withdrawal_cents':sums.get('withdrawal',0),'expense_categories':categories,'transfer_in_cents':transfer_sums.get('income',0),'transfer_out_cents':transfer_sums.get('withdrawal',0)}
 
 @app.post('/api/finance/accounts')
 def create_finance_account(item:FinanceAccountInput,user=Depends(auth.administrator)):
@@ -608,17 +622,73 @@ class FinanceCancellationInput(BaseModel):
         if len(value)<3: raise ValueError('İptal nedeni en az üç karakter olmalıdır.')
         return value
 
+def cancel_finance_row(db,entry_id,reason,user_id):
+    row=db.execute('SELECT * FROM finance_entries WHERE id=?',(entry_id,)).fetchone()
+    if not row: raise HTTPException(404,'Hareket bulunamadı.')
+    if db.execute('SELECT 1 FROM finance_cancellations WHERE entry_id=?',(entry_id,)).fetchone(): return finance_entry_dict(db,entry_id)
+    account=db.execute('SELECT * FROM finance_accounts WHERE id=?',(row['account_id'],)).fetchone()
+    if account['kind']=='cash' and row['kind']=='income' and finance_balance(db,account)<row['amount_cents']: raise HTTPException(409,'İptal kasa bakiyesini negatife düşürüyor. Önce ilgili çıkışları kontrol edin.')
+    db.execute('INSERT INTO finance_cancellations VALUES(?,?,?,?)',(entry_id,reason,user_id,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+    return finance_entry_dict(db,entry_id)
+
 @app.post('/api/finance/entries/{entry_id}/cancel')
 def cancel_finance_entry(entry_id:int,item:FinanceCancellationInput,user=Depends(auth.administrator)):
     with database() as db:
         db.execute('BEGIN IMMEDIATE');require_active_admin(db,user['id'])
-        row=db.execute('SELECT * FROM finance_entries WHERE id=?',(entry_id,)).fetchone()
-        if not row: raise HTTPException(404,'Hareket bulunamadı.')
-        if db.execute('SELECT 1 FROM finance_cancellations WHERE entry_id=?',(entry_id,)).fetchone(): return finance_entry_dict(db,entry_id)
-        account=db.execute('SELECT * FROM finance_accounts WHERE id=?',(row['account_id'],)).fetchone()
-        if account['kind']=='cash' and row['kind']=='income' and finance_balance(db,account)<row['amount_cents']: raise HTTPException(409,'İptal kasa bakiyesini negatife düşürüyor. Önce ilgili çıkışları kontrol edin.')
-        db.execute('INSERT INTO finance_cancellations VALUES(?,?,?,?)',(entry_id,item.reason,user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
-        return finance_entry_dict(db,entry_id)
+        if db.execute('SELECT 1 FROM collection_finance_links WHERE entry_id=?',(entry_id,)).fetchone(): raise HTTPException(409,'Bu hareket tahsilata bağlıdır. Tahsilat ekranından iptal edin.')
+        if db.execute('SELECT 1 FROM finance_transfers WHERE source_entry_id=? OR target_entry_id=?',(entry_id,entry_id)).fetchone(): raise HTTPException(409,'Aktarımın iki ayağı birlikte iptal edilmelidir.')
+        return cancel_finance_row(db,entry_id,item.reason,user['id'])
+
+class FinanceTransferInput(BaseModel):
+    source_account_id:int=Field(strict=True,ge=1)
+    target_account_id:int=Field(strict=True,ge=1)
+    amount:Decimal=Field(gt=0,le=10000000,decimal_places=2)
+    date:date
+    note:str=Field(min_length=3,max_length=300)
+    request_id:UUID
+
+    @field_validator('note')
+    @classmethod
+    def transfer_note(cls,value):
+        value=value.strip()
+        if len(value)<3: raise ValueError('Aktarım açıklaması girilmelidir.')
+        return value
+
+    @model_validator(mode='after')
+    def different_accounts(self):
+        if self.source_account_id==self.target_account_id: raise ValueError('Kaynak ve hedef hesap farklı olmalıdır.')
+        return self
+
+@app.post('/api/finance/transfers')
+def create_finance_transfer(item:FinanceTransferInput,user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');require_active_writer(db,user['id'])
+        amount=int(item.amount*100);day=item.date.isoformat()
+        old=db.execute('SELECT * FROM finance_transfers WHERE request_id=?',(str(item.request_id),)).fetchone()
+        if old:
+            if tuple(old[k] for k in ('source_account_id','target_account_id','amount_cents','date','note','created_by'))!=(item.source_account_id,item.target_account_id,amount,day,item.note,user['id']): raise HTTPException(409,'İstek kimliği farklı aktarım için kullanılmış.')
+            return dict(old)
+        if day>today(): raise HTTPException(422,'Gelecek tarihli aktarım yapılamaz.')
+        source=db.execute('SELECT * FROM finance_accounts WHERE id=?',(item.source_account_id,)).fetchone()
+        target=db.execute('SELECT * FROM finance_accounts WHERE id=?',(item.target_account_id,)).fetchone()
+        if not source or not target: raise HTTPException(404,'Aktarım hesabı bulunamadı.')
+        if source['kind']=='cash' and finance_balance(db,source)<amount: raise HTTPException(409,'Kaynak kasa bakiyesi yetersiz.')
+        stamp=datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()
+        entry_ids=[]
+        for account,kind,suffix in [(source,'withdrawal','out'),(target,'income','in')]:
+            result=db.execute('INSERT INTO finance_entries(account_id,kind,amount_cents,date,category,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(account['id'],kind,amount,day,'',item.note,'transfer:'+str(item.request_id)+':'+suffix,user['id'],stamp))
+            entry_ids.append(result.lastrowid)
+        cursor=db.execute('INSERT INTO finance_transfers(request_id,source_account_id,target_account_id,amount_cents,date,note,created_by,created_at,source_entry_id,target_entry_id) VALUES(?,?,?,?,?,?,?,?,?,?)',(str(item.request_id),source['id'],target['id'],amount,day,item.note,user['id'],stamp,*entry_ids))
+        return dict(db.execute('SELECT * FROM finance_transfers WHERE id=?',(cursor.lastrowid,)).fetchone())
+
+@app.post('/api/finance/transfers/{transfer_id}/cancel')
+def cancel_finance_transfer(transfer_id:int,item:FinanceCancellationInput,user=Depends(auth.administrator)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');require_active_admin(db,user['id'])
+        transfer=db.execute('SELECT * FROM finance_transfers WHERE id=?',(transfer_id,)).fetchone()
+        if not transfer: raise HTTPException(404,'Aktarım bulunamadı.')
+        for entry_id in (transfer['source_entry_id'],transfer['target_entry_id']): cancel_finance_row(db,entry_id,item.reason,user['id'])
+        return dict(transfer)
 
 @app.get('/api/customers/{customer_id}/summary')
 def customer_card_summary(customer_id:int,user=Depends(auth.current_user)):
@@ -936,6 +1006,7 @@ def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.write
         return order_dict(db,order_id)
 
 class CollectionInput(BaseModel):
+    account_id:int|None=Field(default=None,ge=1,strict=True)
     customer_id: int = Field(gt=0, strict=True)
     amount: Decimal = Field(gt=0, le=10000000, decimal_places=2)
     method: Literal['cash','transfer','card']
@@ -952,6 +1023,9 @@ def collection_dict(db, collection_id):
     cancellation = db.execute('SELECT reason,cancelled_at FROM collection_cancellations WHERE collection_id=?',(collection_id,)).fetchone()
     original = db.execute('SELECT request_id FROM collections WHERE id=?',(collection_id,)).fetchone()
     result['cancellation'] = dict(cancellation) if cancellation else None
+    link=db.execute('SELECT e.account_id,a.name account_name FROM collection_finance_links l JOIN finance_entries e ON e.id=l.entry_id JOIN finance_accounts a ON a.id=e.account_id WHERE l.collection_id=?',(collection_id,)).fetchone()
+    result['account_id']=link['account_id'] if link else None
+    result['account_name']=link['account_name'] if link else None
     result['can_cancel'] = result['customer_id'] is not None and original['request_id'] is not None and not cancellation
     return result
 
@@ -981,12 +1055,16 @@ def add_collection(item: CollectionInput, user=Depends(auth.writer)):
         amount_cents = int(item.amount*100)
         previous = db.execute('SELECT * FROM collections WHERE request_id=?',(str(item.request_id),)).fetchone()
         if previous:
-            if previous['created_by']!=user['id'] or previous['customer_id']!=item.customer_id or previous['amount_cents']!=amount_cents or previous['method']!=item.method or previous['note']!=item.note:
+            if collection_dict(db,previous['id'])['account_id']!=item.account_id or previous['created_by']!=user['id'] or previous['customer_id']!=item.customer_id or previous['amount_cents']!=amount_cents or previous['method']!=item.method or previous['note']!=item.note:
                 raise HTTPException(409, 'Bu tahsilat isteği daha önce farklı bilgilerle kullanılmış.')
             return collection_dict(db,previous['id'])
         if not db.execute('SELECT 1 FROM customers WHERE id=?',(item.customer_id,)).fetchone():
             raise HTTPException(404, 'Müşteri bulunamadı.')
+        if item.account_id is not None and not db.execute('SELECT 1 FROM finance_accounts WHERE id=?',(item.account_id,)).fetchone(): raise HTTPException(404,'Tahsilat hesabı bulunamadı.')
         cursor = db.execute('INSERT INTO collections(customer_id,amount_cents,date,method,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)',(item.customer_id,amount_cents,today(),item.method,item.note,str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        if item.account_id is not None:
+            entry=db.execute('INSERT INTO finance_entries(account_id,kind,amount_cents,date,category,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(item.account_id,'income',amount_cents,today(),'','Tahsilat TH-'+str(cursor.lastrowid)+(' · '+item.note if item.note else ''),'collection:'+str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+            db.execute('INSERT INTO collection_finance_links VALUES(?,?)',(cursor.lastrowid,entry.lastrowid))
         return collection_dict(db,cursor.lastrowid)
 
 @app.post('/api/collections/{collection_id}/cancel')
@@ -1001,6 +1079,8 @@ def cancel_collection(collection_id: int, item: CancellationInput, user=Depends(
             return collection_dict(db,collection_id)
         if collection['customer_id'] is None or collection['request_id'] is None:
             raise HTTPException(409, 'Müşteri veya kayıt detayı eksik eski tahsilatlar iptal edilemez.')
+        link=db.execute('SELECT entry_id FROM collection_finance_links WHERE collection_id=?',(collection_id,)).fetchone()
+        if link: cancel_finance_row(db,link['entry_id'],item.reason,user['id'])
         db.execute('INSERT INTO collection_cancellations VALUES(?,?,?,?)',(collection_id,user['id'],item.reason,datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
         return collection_dict(db,collection_id)
 
