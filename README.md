@@ -419,3 +419,19 @@ Kaydederken rota üye kümesi ve sıra sürümü kilit altında doğrulanır. Ba
 Günlük rotada tarihi/günü seçip **Tekrar ziyaret listesi** düğmesine basın. Seçili tarihte ziyaret edildi kaydı olmayan tüm rota müşterileri listelenir: hem ziyaret edilmedi kaydı olanlar hem henüz kayıt girilmeyenler dahildir. Gün atanmayanlar görünümünden açılırsa seçili tarihin rota gününe dönülür. Başka gün seçildiğinde tekrar listesi o günün kayıtlarına göre güncellenir. Bu görünüm önceki günlerden biriken otomatik takip kuyruğu oluşturmaz.
 
 Kaydedilmiş rota sırası ve sıra numaraları korunur. Not/neden varsa satırda gösterilir; kaydı olmayan müşteri ayrıca belirtilir. Arama ve GPS filtresi kullanılabilir; ilk açılışta filtreler temizlenerek tüm kalan müşteriler gösterilir. Müşteri **Ziyaret edildi** kaydedilince tekrar listesinden çıkar. **Tüm rotaya dön** tüm müşterilere döner. Ziyaret verisi yüklenirken veya hata olduğunda doğrulanmamış tekrar listesi gösterilmez; **Ziyaretleri yenile** kullanılabilir. Günlük özet seçili günün tüm rota kapsamını göstermeye devam eder.
+
+## Müşteri kartında son ziyaret ve bakiye
+
+Müşteri düzenleme kartı ve harita/rota seçili müşteri bilgisi güncel borç/alacak tutarını, son başarılı ziyaret tarihini ve en son tarihli ziyaret kaydını gösterir. **Müşteri özeti** kısayolu tüm roller için salt okunur pencere açar. Not, edilememe nedeni ve son kaydı yapan kullanıcı/saat gösterilir. Ziyaret yoksa bu açıkça belirtilir. Özet, rota ekranındaki tarih filtresinden bağımsızdır. Bakiye hesap ekstresinin güncel bakiyesiyle aynı hesaplamadan gelir; negatif değer müşterinin alacağıdır.
+
+## Kasa, banka ve gider takibi (manuel TL kayıtları)
+
+Menüden **Kasa, banka ve giderler** açın. Yönetici **Yeni kasa / banka hesabı** bölümünden ad, tür ve bir defalık açılış bakiyesiyle hesap oluşturur. Personel ve yönetici hesaba para girişi, gider veya diğer para çıkışı ekleyebilir. Gider için kategori ve her hareket için açıklama zorunludur. Salt okunur kullanıcı hesap ve hareketleri görür. Tutarlar kuruş olarak saklanır; gelecek tarihli hareket girilmez.
+
+Hesap bakiyesi = açılış + iptal edilmemiş girişler − iptal edilmemiş giderler − diğer çıkışlar. Güncel hesap kartları tarih filtresinden bağımsızdır. Dönem toplamları seçili hesap/tarih aralığının iptal edilmemiş hareketlerini içerir; açılış bakiyesi dahil değildir. Hareketler 50 satırlık sayfalara ayrılır. Açılış bir başlangıç tutarıdır; geçmiş gelir veya tahsilat belgesi sayılmaz. Kasa açılışı ve güncel kasa bakiyesi negatife düşürülemez; banka bakiyesi negatif olabilir. Geri tarihli hareketlerde geçmiş günlerin ara bakiyeleri bu aşamada sınırlandırılmaz.
+
+Yönetici hatalı hareketi gerekçe yazarak iptal edebilir. Asıl satır ve iptal eden kullanıcı/gerekçe korunur; satır silinmez veya düzenlenmez. Giriş iptali kasayı negatife düşürecekse önce ilgili çıkışlar kontrol edilmelidir. İptal, işlem tarihindeki dönem toplamından kaydı çıkarır; ayrı iptal tarihi muhasebe hareketi üretmez.
+
+Her yeni kayıt istek kimliğiyle tekrar gönderimlere karşı korunur; aynı kimlikte farklı içerik reddedilir. Yazma kilidi altında yetki ve kasa bakiyesi yeniden kontrol edilir. İki eşzamanlı çıkış kasayı aşamaz. Şema eklenmeden önce eski veritabanı yedeklenir.
+
+Bu ilk sürüm mevcut müşteri tahsilatlarını hesaplara bağlamaz, eski tahsilatları aktarmadan başlar. Manuel para girişleri müşteri borcunu azaltmaz; iki modülde aynı parayı tekrar kaydetmemeye dikkat edilmelidir. Bankaya bağlanma/para gönderme, otomatik banka hareketi, virman, döviz, vergi/KDV, gider belgesi veya tedarikçi borcu işlemleri bu aşamada yoktur. Bu ekran Bizim Hesap'ın birebir kopyası olarak sunulmaz; referans ekranlarla eşleştirme ayrı çalışmadır.

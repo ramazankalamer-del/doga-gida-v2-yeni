@@ -43,7 +43,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations')) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -104,6 +104,15 @@ def initialize():
         CREATE TABLE IF NOT EXISTS route_order_positions(
             scope_id INTEGER NOT NULL REFERENCES route_order_versions(scope_id),customer_id INTEGER NOT NULL REFERENCES customers(id),
             position INTEGER NOT NULL CHECK(position>=0),PRIMARY KEY(scope_id,customer_id),UNIQUE(scope_id,position));''')
+        db.executescript('''CREATE TABLE IF NOT EXISTS finance_accounts(
+            id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE COLLATE NOCASE,kind TEXT NOT NULL CHECK(kind IN ('cash','bank')),
+            opening_cents INTEGER NOT NULL,request_id TEXT NOT NULL UNIQUE,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS finance_entries(
+            id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL REFERENCES finance_accounts(id),kind TEXT NOT NULL CHECK(kind IN ('income','withdrawal','expense')),
+            amount_cents INTEGER NOT NULL CHECK(amount_cents>0),date TEXT NOT NULL,category TEXT NOT NULL,note TEXT NOT NULL,
+            request_id TEXT NOT NULL UNIQUE,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS finance_cancellations(
+            entry_id INTEGER PRIMARY KEY REFERENCES finance_entries(id),reason TEXT NOT NULL,user_id INTEGER NOT NULL REFERENCES users(id),cancelled_at TEXT NOT NULL);''')
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -494,6 +503,134 @@ def save_customer_visit(customer_id:int,item:VisitInput,user=Depends(auth.writer
         db.execute('INSERT INTO customer_visits(customer_id,visit_date,visited,version,updated_by,updated_at,note,reason) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(customer_id,visit_date) DO UPDATE SET visited=excluded.visited,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at,note=excluded.note,reason=excluded.reason',values)
         db.execute('INSERT INTO customer_visit_events(customer_id,visit_date,visited,version,updated_by,updated_at,note,reason) VALUES(?,?,?,?,?,?,?,?)',values)
         return dict(db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE customer_id=? AND visit_date=?',(customer_id,day)).fetchone())
+
+class FinanceAccountInput(BaseModel):
+    name:str=Field(min_length=2,max_length=100)
+    kind:Literal['cash','bank']
+    opening:Decimal=Field(default=Decimal('0'),ge=-10000000,le=10000000,decimal_places=2)
+    request_id:UUID
+
+    @field_validator('name')
+    @classmethod
+    def account_name(cls,value):
+        value=value.strip()
+        if len(value)<2: raise ValueError('Hesap adı en az iki karakter olmalıdır.')
+        return value
+
+    @model_validator(mode='after')
+    def cash_opening(self):
+        if self.kind=='cash' and self.opening<0: raise ValueError('Kasa açılışı negatif olamaz.')
+        return self
+
+class FinanceEntryInput(BaseModel):
+    account_id:int=Field(strict=True,ge=1)
+    kind:Literal['income','withdrawal','expense']
+    amount:Decimal=Field(gt=0,le=10000000,decimal_places=2)
+    date:date
+    category:str=Field(default='',max_length=80)
+    note:str=Field(min_length=3,max_length=300)
+    request_id:UUID
+
+    @field_validator('category','note')
+    @classmethod
+    def finance_text(cls,value): return value.strip()
+
+    @model_validator(mode='after')
+    def finance_description(self):
+        if len(self.note)<3: raise ValueError('Açıklama en az üç karakter olmalıdır.')
+        if self.kind=='expense' and len(self.category)<2: raise ValueError('Gider kategorisi girilmelidir.')
+        if self.kind!='expense' and self.category: raise ValueError('Kategori yalnızca gider için kullanılabilir.')
+        return self
+
+def finance_balance(db,account):
+    net=db.execute("SELECT COALESCE(SUM(CASE WHEN e.kind='income' THEN e.amount_cents ELSE -e.amount_cents END),0) FROM finance_entries e WHERE e.account_id=? AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id)",(account['id'],)).fetchone()[0]
+    return account['opening_cents']+net
+
+def finance_entry_dict(db,entry_id):
+    row=dict(db.execute('SELECT e.*,a.name account_name,u.username FROM finance_entries e JOIN finance_accounts a ON a.id=e.account_id JOIN users u ON u.id=e.created_by WHERE e.id=?',(entry_id,)).fetchone())
+    cancel=db.execute('SELECT x.reason,x.cancelled_at,u.username FROM finance_cancellations x JOIN users u ON u.id=x.user_id WHERE entry_id=?',(entry_id,)).fetchone()
+    row['cancellation']=dict(cancel) if cancel else None
+    return row
+
+@app.get('/api/finance')
+def list_finance(account_id:int|None=None,start_date:date|None=None,end_date:date|None=None,offset:int=Query(default=0,ge=0),user=Depends(auth.current_user)):
+    if start_date and end_date and start_date>end_date: raise HTTPException(422,'Tarih aralığı geçersiz.')
+    with database() as db:
+        db.execute('BEGIN')
+        accounts=[{**dict(a),'balance_cents':finance_balance(db,a)} for a in db.execute('SELECT id,name,kind,opening_cents FROM finance_accounts ORDER BY id')]
+        if account_id is not None and not any(a['id']==account_id for a in accounts): raise HTTPException(404,'Hesap bulunamadı.')
+        clauses=['1=1'];params=[]
+        if account_id is not None: clauses.append('e.account_id=?');params.append(account_id)
+        if start_date: clauses.append('e.date>=?');params.append(start_date.isoformat())
+        if end_date: clauses.append('e.date<=?');params.append(end_date.isoformat())
+        where=' AND '.join(clauses)
+        total=db.execute(f'SELECT COUNT(*) FROM finance_entries e WHERE {where}',params).fetchone()[0]
+        sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) GROUP BY e.kind',params)}
+        entries=[finance_entry_dict(db,row['id']) for row in db.execute(f'SELECT e.id FROM finance_entries e WHERE {where} ORDER BY e.date DESC,e.id DESC LIMIT 50 OFFSET ?',[*params,offset])]
+        return {'accounts':accounts,'entries':entries,'total':total,'offset':offset,'income_cents':sums.get('income',0),'expense_cents':sums.get('expense',0),'withdrawal_cents':sums.get('withdrawal',0)}
+
+@app.post('/api/finance/accounts')
+def create_finance_account(item:FinanceAccountInput,user=Depends(auth.administrator)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');require_active_admin(db,user['id'])
+        previous=db.execute('SELECT * FROM finance_accounts WHERE request_id=?',(str(item.request_id),)).fetchone()
+        opening=int(item.opening*100)
+        if previous:
+            if (previous['name'],previous['kind'],previous['opening_cents'],previous['created_by'])!=(item.name,item.kind,opening,user['id']): raise HTTPException(409,'İstek kimliği farklı hesap için kullanılmış.')
+            return {'id':previous['id']}
+        if db.execute('SELECT 1 FROM finance_accounts WHERE name=? COLLATE NOCASE',(item.name,)).fetchone(): raise HTTPException(409,'Bu hesap adı zaten kullanılıyor.')
+        result=db.execute('INSERT INTO finance_accounts(name,kind,opening_cents,request_id,created_by,created_at) VALUES(?,?,?,?,?,?)',(item.name,item.kind,opening,str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return {'id':result.lastrowid}
+
+@app.post('/api/finance/entries')
+def create_finance_entry(item:FinanceEntryInput,user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');require_active_writer(db,user['id'])
+        amount=int(item.amount*100);day=item.date.isoformat()
+        previous=db.execute('SELECT * FROM finance_entries WHERE request_id=?',(str(item.request_id),)).fetchone()
+        if previous:
+            if tuple(previous[k] for k in ('account_id','kind','amount_cents','date','category','note','created_by'))!=(item.account_id,item.kind,amount,day,item.category,item.note,user['id']): raise HTTPException(409,'İstek kimliği farklı işlem için kullanılmış.')
+            return finance_entry_dict(db,previous['id'])
+        if day>today(): raise HTTPException(422,'Gelecek tarihli hareket kaydedilemez.')
+        account=db.execute('SELECT * FROM finance_accounts WHERE id=?',(item.account_id,)).fetchone()
+        if not account: raise HTTPException(404,'Hesap bulunamadı.')
+        if account['kind']=='cash' and item.kind!='income' and finance_balance(db,account)<amount: raise HTTPException(409,'Kasa bakiyesi bu çıkış için yetersiz.')
+        result=db.execute('INSERT INTO finance_entries(account_id,kind,amount_cents,date,category,note,request_id,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(item.account_id,item.kind,amount,day,item.category,item.note,str(item.request_id),user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return finance_entry_dict(db,result.lastrowid)
+
+class FinanceCancellationInput(BaseModel):
+    reason:str=Field(min_length=3,max_length=300)
+
+    @field_validator('reason')
+    @classmethod
+    def valid_reason(cls,value):
+        value=value.strip()
+        if len(value)<3: raise ValueError('İptal nedeni en az üç karakter olmalıdır.')
+        return value
+
+@app.post('/api/finance/entries/{entry_id}/cancel')
+def cancel_finance_entry(entry_id:int,item:FinanceCancellationInput,user=Depends(auth.administrator)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');require_active_admin(db,user['id'])
+        row=db.execute('SELECT * FROM finance_entries WHERE id=?',(entry_id,)).fetchone()
+        if not row: raise HTTPException(404,'Hareket bulunamadı.')
+        if db.execute('SELECT 1 FROM finance_cancellations WHERE entry_id=?',(entry_id,)).fetchone(): return finance_entry_dict(db,entry_id)
+        account=db.execute('SELECT * FROM finance_accounts WHERE id=?',(row['account_id'],)).fetchone()
+        if account['kind']=='cash' and row['kind']=='income' and finance_balance(db,account)<row['amount_cents']: raise HTTPException(409,'İptal kasa bakiyesini negatife düşürüyor. Önce ilgili çıkışları kontrol edin.')
+        db.execute('INSERT INTO finance_cancellations VALUES(?,?,?,?)',(entry_id,item.reason,user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        return finance_entry_dict(db,entry_id)
+
+@app.get('/api/customers/{customer_id}/summary')
+def customer_card_summary(customer_id:int,user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN')
+        customer=db.execute('SELECT id,name FROM customers WHERE id=?',(customer_id,)).fetchone()
+        if not customer:
+            raise HTTPException(404,'Müşteri bulunamadı.')
+        balance=build_statement(db,customer)['current_balance_cents']
+        latest=db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE v.customer_id=? AND v.visit_date<=? ORDER BY v.visit_date DESC LIMIT 1',(customer_id,today())).fetchone()
+        successful=db.execute('SELECT MAX(visit_date) FROM customer_visits WHERE customer_id=? AND visited=1 AND visit_date<=?',(customer_id,today())).fetchone()[0]
+        return {'customer':dict(customer),'balance_cents':balance,'last_visit_record':dict(latest) if latest else None,'last_successful_visit_date':successful}
 
 @app.get('/api/customers/{customer_id}/statement')
 def customer_statement(customer_id:int,start_date:date|None=None,end_date:date|None=None,user=Depends(auth.current_user)):

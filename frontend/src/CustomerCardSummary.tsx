@@ -1,0 +1,17 @@
+import {useEffect,useRef,useState} from 'react';
+import type {Visit,VisitRequest} from './CustomerVisits';
+import {useCustomerDialog} from './useCustomerDialog';
+type Customer={id:number;name:string};
+type Summary={balance_cents:number;last_visit_record:Visit|null;last_successful_visit_date:string|null};
+const money=(cents:number)=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY'}).format(Math.abs(cents)/100);
+const day=(date:string)=>new Date(date+'T12:00:00Z').toLocaleDateString('tr-TR',{timeZone:'Europe/Istanbul'});
+export default function CustomerCardSummary({customer,request,disabled=false}:{customer:Customer;request:VisitRequest;disabled?:boolean}){
+ const [data,setData]=useState<Summary|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);const sequence=useRef(0);
+ useEffect(()=>{const id=++sequence.current;setLoading(true);setError('');setData(null);request<Summary>(`customers/${customer.id}/summary`).then(row=>{if(id===sequence.current)setData(row);}).catch(e=>{if(id===sequence.current)setError((e as Error).message);}).finally(()=>{if(id===sequence.current)setLoading(false);});return()=>{sequence.current++;};},[customer.id,request,revision]);
+ const latest=data?.last_visit_record;
+ return <section className="customer-card-summary" aria-label="Son ziyaret ve bakiye özeti"><div className="card-summary-heading"><strong>Son ziyaret ve bakiye</strong><button type="button" className="secondary" disabled={loading||disabled} onClick={()=>setRevision(v=>v+1)}>Özeti güncelle</button></div>{loading?<p role="status">Müşteri özeti yükleniyor…</p>:error?<p className="error" role="alert">{error}</p>:data&&<><div className="customer-balance"><span>{data.balance_cents>0?'Müşterinin borcu':data.balance_cents<0?'Müşterinin alacağı':'Hesap kapalı'}</span><strong>{money(data.balance_cents)}</strong><small>Güncel bakiye · tüm hesap hareketleri</small></div><p><strong>Son başarılı ziyaret:</strong> {data.last_successful_visit_date?day(data.last_successful_visit_date):'Henüz başarılı ziyaret kaydı yok.'}</p>{latest?<div className="last-visit-record"><strong>Son ziyaret kaydı: {day(latest.visit_date)}</strong><p>{latest.visited?'Ziyaret edildi':'Ziyaret edilmedi'}</p><p>Ziyaret notu: {latest.note||'Not eklenmedi.'}</p>{!latest.visited&&<p>Edilememe nedeni: {latest.reason||'Neden belirtilmedi.'}</p>}<small>Son değiştiren: {latest.updated_username} · {new Date(latest.updated_at).toLocaleString('tr-TR',{timeZone:'Europe/Istanbul'})}</small></div>:<p>Henüz ziyaret kaydı yok.</p>}<p className="order-help">Özet günceldir; rota ekranında seçilen tarihten bağımsızdır. Aynı tarihteki son kaydedilmiş ziyaret durumu esas alınır.</p></>}</section>;
+}
+export function CustomerSummaryDialog({customer,request,onClose}:{customer:Customer;request:VisitRequest;onClose:()=>void}){
+ const dialog=useCustomerDialog(onClose);
+ return <div className="modal-backdrop customer-dialog-backdrop"><section ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="customer-summary-title"><div className="panel-head"><div><h2 id="customer-summary-title">Müşteri özeti</h2><p>{customer.name}</p></div><button type="button" className="secondary" onClick={onClose}>Kapat</button></div><div className="customer-summary-dialog-content"><CustomerCardSummary customer={customer} request={request}/></div></section></div>;
+}
