@@ -2,12 +2,12 @@ import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {useCustomerDialog} from './useCustomerDialog';
 
 type Customer={id:number;name:string};
-type Movement={date:string;kind:'order'|'collection'|'order_cancel'|'collection_cancel';reference:string;record_id:number;note:string;status:string;debit_cents:number;credit_cents:number;balance_cents:number};
+type Movement={date:string;kind:'sales_return'|'sales_return_cancel'|'order'|'collection'|'order_cancel'|'collection_cancel';reference:string;record_id:number;note:string;status:string;debit_cents:number;credit_cents:number;balance_cents:number};
 type Statement={customer:Customer;start_date:string|null;end_date:string|null;opening_balance_cents:number;debit_cents:number;credit_cents:number;closing_balance_cents:number;current_balance_cents:number;movements:Movement[]};
 type Request=<T>(path:string,data?:object)=>Promise<T>;
 const money=(cents:number)=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY'}).format(cents/100);
 const day=(value:string)=>new Date(value+'T12:00:00').toLocaleDateString('tr-TR');
-const kinds={order:'Sipariş',collection:'Tahsilat',order_cancel:'Sipariş iptali',collection_cancel:'Tahsilat iptali'};
+const kinds={sales_return:'Satış iadesi',sales_return_cancel:'Satış iade iptali',order:'Sipariş',collection:'Tahsilat',order_cancel:'Sipariş iptali',collection_cancel:'Tahsilat iptali'};
 const balanceLabel=(value:number)=>value>0?'Müşterinin borcu':value<0?'Müşterinin alacağı':'Hesap kapalı';
 
 export default function CustomerStatement({customer,request,onClose}:{customer:Customer;request:Request;onClose:()=>void}){
@@ -34,7 +34,7 @@ export default function CustomerStatement({customer,request,onClose}:{customer:C
     <p className="statement-current">Güncel hesap bakiyesi: <strong>{money(data.current_balance_cents)}</strong> · {balanceLabel(data.current_balance_cents)}</p>
     <p className="order-help">Borç müşterinin bize borcunu artırır; alacak azaltır. Eksi bakiye müşterinin alacağıdır. İptaller ayrı ters hareket olarak gösterilir.</p>
     <div className="table-wrap"><table><thead><tr><th>TARİH / KAYIT</th><th>İŞLEM / AÇIKLAMA</th><th>BORÇ</th><th>ALACAK</th><th>BAKİYE</th></tr></thead><tbody>{data.movements.map(row=><tr key={`${row.kind}-${row.record_id}`}><td>{day(row.date)}<small>{row.reference}</small></td><td><strong>{kinds[row.kind]}</strong><small>{row.note}</small></td><td className="amount">{row.debit_cents?money(row.debit_cents):'—'}</td><td className="amount">{row.credit_cents?money(row.credit_cents):'—'}</td><td className="amount">{money(row.balance_cents)}<small>{balanceLabel(row.balance_cents)}</small></td></tr>)}</tbody></table>{!data.movements.length&&<p className="empty">Bu dönemde hesap hareketi yok.</p>}</div>
-    <p className="order-help">Aynı gün hareketleri sipariş, tahsilat ve iptal sırasıyla; kendi içinde kayıt numarasına göre gösterilir. Müşteriye bağlı olmayan eski tahsilatlar ekstreye dahil değildir.</p>
+    <p className="order-help">Aynı gün hareketleri sipariş, tahsilat, iade ve iptal sırasıyla; kendi içinde kayıt numarasına göre gösterilir. Müşteriye bağlı olmayan eski tahsilatlar ekstreye dahil değildir.</p>
    </>}
   </div>
  </section></div>;

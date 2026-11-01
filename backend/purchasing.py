@@ -1,3 +1,4 @@
+import commercial_returns
 from datetime import date
 from decimal import Decimal
 import json
@@ -77,6 +78,7 @@ def register(app,env):
         return row
     def purchase_dict(db,pid):
         row=dict(db.execute('SELECT p.*,s.name supplier FROM purchases p JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=?',(pid,)).fetchone())
+        row['has_returns']=commercial_returns.has_returns(db,'purchase',pid)
         row.pop('payload');row['items']=[dict(x) for x in db.execute('SELECT * FROM purchase_items WHERE purchase_id=? ORDER BY product_id',(pid,))]
         cancel=db.execute('SELECT reason,cancelled_at FROM purchase_cancellations WHERE purchase_id=?',(pid,)).fetchone();row['cancellation']=dict(cancel) if cancel else None
         return row
@@ -89,7 +91,8 @@ def register(app,env):
             for row in db.execute('SELECT * FROM suppliers ORDER BY id DESC'):
                 total=db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM purchases p WHERE supplier_id=? AND NOT EXISTS(SELECT 1 FROM purchase_cancellations c WHERE c.purchase_id=p.id)',(row['id'],)).fetchone()[0]
                 paid=db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM supplier_payments p WHERE supplier_id=? AND NOT EXISTS(SELECT 1 FROM finance_cancellations c WHERE c.entry_id=p.finance_entry_id)',(row['id'],)).fetchone()[0]
-                rows.append({**dict(row),'purchases_cents':total,'paid_cents':paid,'balance_cents':total-paid})
+                returned=db.execute(f'''SELECT COALESCE(SUM(r.amount_cents),0) FROM commercial_returns r JOIN purchases p ON p.id=r.purchase_id WHERE p.supplier_id=? AND {commercial_returns.active_clause()}''',(row['id'],)).fetchone()[0]
+                rows.append({**dict(row),'purchases_cents':total,'returns_cents':returned,'paid_cents':paid,'balance_cents':total-returned-paid})
             return rows
     @app.post('/api/suppliers')
     def create_supplier(item:SupplierCreate,user=Depends(env.auth.writer)):
@@ -144,6 +147,7 @@ def register(app,env):
             db.execute('BEGIN IMMEDIATE');env.require_active_admin(db,user['id'])
             if not db.execute('SELECT 1 FROM purchases WHERE id=?',(purchase_id,)).fetchone(): raise HTTPException(404,'Alış bulunamadı.')
             if db.execute('SELECT 1 FROM purchase_cancellations WHERE purchase_id=?',(purchase_id,)).fetchone(): return purchase_dict(db,purchase_id)
+            if commercial_returns.has_returns(db,'purchase',purchase_id): raise HTTPException(409,'Önce bu alışa bağlı geçerli iadeleri iptal edin.')
             lines=list(db.execute('SELECT * FROM purchase_items WHERE purchase_id=?',(purchase_id,)))
             for line in lines:
                 product=db.execute('SELECT * FROM products WHERE id=?',(line['product_id'],)).fetchone()

@@ -6,6 +6,7 @@ import os
 import sqlite3
 import sys
 import purchasing
+import commercial_returns
 import receivables
 import trade_reports
 import account_settings
@@ -49,7 +50,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and {'due_date','due_version'} <= {row[1] for row in source.execute('PRAGMA table_info(orders)')} and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers','order_due_events','sale_cost_snapshots',*purchasing.TABLES)) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and {'due_date','due_version'} <= {row[1] for row in source.execute('PRAGMA table_info(orders)')} and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers','order_due_events','sale_cost_snapshots',*purchasing.TABLES,*commercial_returns.TABLES)) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -132,6 +133,7 @@ def initialize():
         purchasing.initialize(db)
         receivables.initialize(db)
         trade_reports.initialize(db)
+        commercial_returns.initialize(db)
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -480,7 +482,8 @@ def daily_route_summary(visit_date:date,unassigned:bool=False,user=Depends(auth.
         visited=db.execute(f'SELECT COUNT(*) FROM customer_visits WHERE customer_id IN ({scope}) AND visit_date=? AND visited=1',[*params,day]).fetchone()[0]
         orders=db.execute(f"SELECT COUNT(*) count,COALESCE(SUM(amount_cents),0) amount FROM orders WHERE customer_id IN ({scope}) AND date=? AND status!='İptal edildi' AND NOT EXISTS(SELECT 1 FROM order_cancellations x WHERE x.order_id=orders.id)",[*params,day]).fetchone()
         collected=db.execute(f'SELECT COUNT(*) count,COALESCE(SUM(amount_cents),0) amount FROM collections WHERE customer_id IN ({scope}) AND date=? AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=collections.id)',[*params,day]).fetchone()
-        return {'date':day,'unassigned':unassigned,'customers':customers,'visited':visited,'remaining':customers-visited,'order_count':orders['count'],'sales_cents':orders['amount'],'collection_count':collected['count'],'collections_cents':collected['amount']}
+        returned=db.execute(f'''SELECT COALESCE(SUM(r.amount_cents),0) FROM commercial_returns r JOIN orders o ON o.id=r.order_id WHERE o.customer_id IN ({scope}) AND r.date=? AND {commercial_returns.active_clause()}''',[*params,day]).fetchone()[0]
+        return {'date':day,'unassigned':unassigned,'customers':customers,'visited':visited,'remaining':customers-visited,'order_count':orders['count'],'sales_cents':orders['amount']-returned,'returns_cents':returned,'collection_count':collected['count'],'collections_cents':collected['amount']}
 
 @app.get('/api/customers/{customer_id}/visits')
 def customer_visit_history(customer_id:int,start_date:date|None=None,end_date:date|None=None,offset:int=Query(default=0,ge=0),limit:int=Query(default=50,ge=1,le=100),user=Depends(auth.current_user)):
@@ -929,7 +932,8 @@ def order_dict(db, order_id):
     result['items'] = [dict(line) for line in db.execute('SELECT product_id,name,sku,quantity,price_cents FROM order_items WHERE order_id=? ORDER BY product_id',(order_id,))]
     cancellation = db.execute('SELECT reason,cancelled_at FROM order_cancellations WHERE order_id=?',(order_id,)).fetchone()
     result['cancellation'] = dict(cancellation) if cancellation else None
-    result['can_cancel'] = result['status']=='Bekliyor' and bool(result['items']) and not cancellation
+    result['has_returns']=commercial_returns.has_returns(db,'sale',order_id)
+    result['can_cancel'] = result['status']=='Bekliyor' and bool(result['items']) and not cancellation and not result['has_returns']
     result['next_status'] = ORDER_NEXT_STATUS.get(result['status']) if not cancellation else None
     result['status_history'] = [dict(row) for row in db.execute('SELECT e.from_status,e.to_status,e.changed_at,u.username FROM order_status_events e JOIN users u ON u.id=e.user_id WHERE e.order_id=? ORDER BY e.id',(order_id,))]
     return result
@@ -1024,6 +1028,7 @@ def cancel_order(order_id: int, item: CancellationInput, user=Depends(auth.write
         lines = db.execute('SELECT product_id,quantity FROM order_items WHERE order_id=?',(order_id,)).fetchall()
         if not lines:
             raise HTTPException(409, 'Ürün detayı olmayan eski örnek siparişler iptal edilemez.')
+        if commercial_returns.has_returns(db,'sale',order_id): raise HTTPException(409,'Önce bu satışa bağlı geçerli iadeleri iptal edin.')
         restored_products = {}
         for line in lines:
             product = db.execute('SELECT * FROM products WHERE id=?',(line['product_id'],)).fetchone()
@@ -1070,13 +1075,18 @@ def list_collections(user=Depends(auth.current_user)):
 @app.get('/api/customer-balances')
 def customer_balances(user=Depends(auth.current_user)):
     with database() as db:
-        return [dict(row) for row in db.execute('''
+        db.execute('BEGIN')
+        rows=[dict(row) for row in db.execute('''
           SELECT c.id,c.name,COALESCE(o.total,0) sales_cents,COALESCE(t.total,0) collected_cents,
                  COALESCE(o.total,0)-COALESCE(t.total,0) balance_cents
           FROM customers c
           LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM orders WHERE status!='İptal edildi' GROUP BY customer_id) o ON o.customer_id=c.id
           LEFT JOIN (SELECT customer_id,SUM(amount_cents) total FROM collections p WHERE customer_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=p.id) GROUP BY customer_id) t ON t.customer_id=c.id
           ORDER BY c.id DESC''')]
+        for row in rows:
+            returned=db.execute(f'''SELECT COALESCE(SUM(r.amount_cents),0) FROM commercial_returns r JOIN orders o ON o.id=r.order_id WHERE o.customer_id=? AND {commercial_returns.active_clause()}''',(row['id'],)).fetchone()[0]
+            row['returns_cents']=returned;row['balance_cents']-=returned
+        return rows
 
 @app.post('/api/collections', status_code=201)
 def add_collection(item: CollectionInput, user=Depends(auth.writer)):
@@ -1120,14 +1130,17 @@ def cancel_collection(collection_id: int, item: CancellationInput, user=Depends(
 @app.get('/api/dashboard')
 def dashboard(user=Depends(auth.current_user)):
     with database() as db:
+        db.execute('BEGIN')
         sales = db.execute("SELECT COALESCE(SUM(amount_cents),0),COUNT(*) FROM orders WHERE date=? AND status!='İptal edildi'",(today(),)).fetchone()
+        returned=db.execute(f"SELECT COALESCE(SUM(r.amount_cents),0) FROM commercial_returns r WHERE r.kind='sale' AND r.date=? AND {commercial_returns.active_clause()}",(today(),)).fetchone()[0]
         collected = db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM collections p WHERE date=? AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=p.id)',(today(),)).fetchone()[0]
-        return {'date':today(),'sales':sales[0]/100,'orders':sales[1],'collections':collected/100,'customers':db.execute('SELECT COUNT(*) FROM customers').fetchone()[0], 'stock':db.execute('SELECT COALESCE(SUM(stock),0) FROM products').fetchone()[0], 'low_stock':[product_dict(row) for row in db.execute('SELECT * FROM products WHERE stock<=min_stock')], 'recent_orders':[dict(row) for row in db.execute('SELECT o.id,c.name customer,o.amount_cents/100.0 amount,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 5')]}
+        return {'date':today(),'sales':(sales[0]-returned)/100,'returns_cents':returned,'orders':sales[1],'collections':collected/100,'customers':db.execute('SELECT COUNT(*) FROM customers').fetchone()[0], 'stock':db.execute('SELECT COALESCE(SUM(stock),0) FROM products').fetchone()[0], 'low_stock':[product_dict(row) for row in db.execute('SELECT * FROM products WHERE stock<=min_stock')], 'recent_orders':[dict(row) for row in db.execute('SELECT o.id,c.name customer,o.amount_cents/100.0 amount,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 5')]}
 
 purchasing.register(app,sys.modules[__name__])
 receivables.register(app,sys.modules[__name__])
 trade_reports.register(app,sys.modules[__name__])
 account_settings.register(app,sys.modules[__name__])
+commercial_returns.register(app,sys.modules[__name__])
 
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 if DIST.exists():

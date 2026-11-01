@@ -2,10 +2,10 @@ import { useEffect, useState, type FormEvent } from 'react';
 import Warehouses from './Warehouses';
 
 type Product={id:number;name:string;sku:string;stock:number;opening_stock:number;net_change:number;tracked_since:string};
-type Movement={id:number;product_id:number;name:string;sku:string;kind:'purchase_in'|'purchase_cancel_out'|'opening'|'receipt'|'order'|'cancellation'|'correction'|'return_accept'|'transfer_in'|'transfer_out';warehouse:'MERKEZ'|'IADE';action_id:string|null;quantity:number;before_stock:number;after_stock:number;username:string;created_at:string;note:string;order_id:number|null};
+type Movement={id:number;product_id:number;name:string;sku:string;kind:'sales_return_in'|'sales_return_cancel_out'|'purchase_return_out'|'purchase_return_cancel_in'|'purchase_in'|'purchase_cancel_out'|'opening'|'receipt'|'order'|'cancellation'|'correction'|'return_accept'|'transfer_in'|'transfer_out';warehouse:'MERKEZ'|'IADE';action_id:string|null;quantity:number;before_stock:number;after_stock:number;username:string;created_at:string;note:string;order_id:number|null};
 type Ledger={products:Product[];movements:Movement[]};
 type Request=<T>(path:string,data?:object)=>Promise<T>;
-const kinds={purchase_in:'Alış stok girişi',purchase_cancel_out:'Alış iptal çıkışı',opening:'Ürün açılışı',receipt:'Stok girişi',order:'Sipariş çıkışı',cancellation:'Sipariş iptal iadesi',correction:'Stok düzeltmesi',return_accept:'İade kabulü',transfer_in:'Depo transfer girişi',transfer_out:'Depo transfer çıkışı'};
+const kinds={sales_return_in:'Satış iade girişi',sales_return_cancel_out:'Satış iade iptali',purchase_return_out:'Alış iade çıkışı',purchase_return_cancel_in:'Alış iade iptali',purchase_in:'Alış stok girişi',purchase_cancel_out:'Alış iptal çıkışı',opening:'Ürün açılışı',receipt:'Stok girişi',order:'Sipariş çıkışı',cancellation:'Sipariş iptal iadesi',correction:'Stok düzeltmesi',return_accept:'İade kabulü',transfer_in:'Depo transfer girişi',transfer_out:'Depo transfer çıkışı'};
 const date=(value:string)=>new Date(value).toLocaleString('tr-TR',{timeZone:'Europe/Istanbul'});
 const signed=(n:number)=>(n>0?'+':'')+n.toLocaleString('tr-TR');
 

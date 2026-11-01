@@ -19,7 +19,7 @@ def seed():
 def test_daily_summary_scope_date_cents_cancellations_and_no_duplicates(client):
     seed()
     data=client.get('/api/daily-route-summary?visit_date=2026-10-26').json()
-    assert data=={'date':'2026-10-26','unassigned':False,'customers':2,'visited':1,'remaining':1,'order_count':2,'sales_cents':3003,'collection_count':2,'collections_cents':1501}
+    assert data=={'date':'2026-10-26','unassigned':False,'customers':2,'visited':1,'remaining':1,'order_count':2,'sales_cents':3003,'returns_cents':0,'collection_count':2,'collections_cents':1501}
     other=client.get('/api/daily-route-summary?visit_date=2026-11-02').json()
     assert other['customers']==2 and other['visited']==other['sales_cents']==other['collections_cents']==0
     assert other['remaining']==2

@@ -1,3 +1,4 @@
+import commercial_returns
 """Read-only trade reports and sale-time estimates, stored in integer kuruş."""
 from datetime import date, timedelta
 from typing import Literal
@@ -13,10 +14,11 @@ def initialize(db):
 
 def snapshot_cost(db, item_id, product_id, sale_date):
     # Only purchases already recorded at sale creation can supply an estimate.
-    row=db.execute('''SELECT p.id,i.unit_cost_cents FROM purchase_items i
+    candidates=db.execute('''SELECT p.id,i.unit_cost_cents,i.quantity FROM purchase_items i
         JOIN purchases p ON p.id=i.purchase_id WHERE i.product_id=? AND p.date<=?
         AND NOT EXISTS(SELECT 1 FROM purchase_cancellations c WHERE c.purchase_id=p.id)
-        ORDER BY p.date DESC,p.id DESC LIMIT 1''',(product_id,sale_date)).fetchone()
+        ORDER BY p.date DESC,p.id DESC''',(product_id,sale_date))
+    row=next((r for r in candidates if r['quantity']>commercial_returns.returned_quantity(db,'purchase',r['id'],product_id)),None)
     db.execute('INSERT INTO sale_cost_snapshots VALUES(?,?,?)',
                (item_id,row['unit_cost_cents'] if row else None,row['id'] if row else None))
 
@@ -49,7 +51,8 @@ def statement(db,sid,start,end,offset):
         add(p['date'],'payment',p['id'],0,p['amount_cents'],p['account']+' · '+p['note'])
         if p['cancelled_at']:
             add(local_day(p['cancelled_at']),'payment_cancel',p['id'],p['amount_cents'],0,p['reason'])
-    rank={'purchase':0,'payment':1,'purchase_cancel':2,'payment_cancel':3}
+    events.extend(commercial_returns.ledger_events(db,'purchase',sid))
+    rank={'purchase':0,'payment':1,'purchase_return':2,'purchase_return_cancel':3,'purchase_cancel':4,'payment_cancel':5}
     events.sort(key=lambda e:(e['date'],rank[e['kind']],int(e['reference'].split('-')[1])))
     opening=sum(e['debit_cents']-e['credit_cents'] for e in events if start and e['date']<start)
     rows=[e for e in events if (not start or e['date']>=start) and (not end or e['date']<=end)]
@@ -72,9 +75,10 @@ def payables(db,reference,status,supplier_id,offset):
             FROM purchases p JOIN suppliers s ON s.id=p.supplier_id WHERE p.date<=?
             AND NOT EXISTS(SELECT 1 FROM purchase_cancellations c WHERE c.purchase_id=p.id)
             ORDER BY p.date,p.id''',(reference,)):
-        used=min(credits.get(p['supplier_id'],0),p['amount_cents'])
+        net=p['amount_cents']-commercial_returns.returned_amount(db,'purchase',p['id'],reference)
+        used=min(credits.get(p['supplier_id'],0),net)
         credits[p['supplier_id']]=credits.get(p['supplier_id'],0)-used
-        remaining=p['amount_cents']-used
+        remaining=net-used
         if not remaining: continue
         due=p['due_date'];state='undated' if not due else 'overdue' if due<reference else 'today' if due==reference else 'upcoming'
         include=status=='all' or status==state
@@ -102,7 +106,9 @@ def profit_report(db,start,end,product_id,offset,reference):
     for p in db.execute('''SELECT p.date,p.id purchase_id,i.* FROM purchases p JOIN purchase_items i ON i.purchase_id=p.id
             WHERE NOT EXISTS(SELECT 1 FROM purchase_cancellations c WHERE c.purchase_id=p.id) ORDER BY p.date,p.id'''):
         if p['product_id'] not in products or p['date']>last_day: continue
-        row=products[p['product_id']];row['last_cost_cents']=p['unit_cost_cents']
+        row=products[p['product_id']]
+        if p['quantity']>commercial_returns.returned_quantity(db,'purchase',p['purchase_id'],p['product_id'],last_day):
+            row['last_cost_cents']=p['unit_cost_cents']
         if inside(p['date']):
             row['purchased_quantity']+=p['quantity'];row['purchased_cents']+=p['quantity']*p['unit_cost_cents']
     total_sales=unitemized=0
@@ -120,16 +126,29 @@ def profit_report(db,start,end,product_id,offset,reference):
             if line['unit_cost_cents'] is None: row['unknown_quantity']+=line['quantity']
             else:
                 row['known_sales_cents']+=revenue;row['estimated_cost_cents']+=line['quantity']*line['unit_cost_cents']
+    sales_returns=0
+    for r in db.execute(f'''SELECT r.kind,r.date,i.* FROM commercial_returns r JOIN commercial_return_items i ON i.return_id=r.id
+            WHERE {commercial_returns.active_clause()}'''):
+        if not inside(r['date']) or r['product_id'] not in products: continue
+        row=products[r['product_id']];amount=r['quantity']*r['price_cents']
+        if r['kind']=='purchase':
+            row['purchased_quantity']-=r['quantity'];row['purchased_cents']-=amount
+        else:
+            total_sales-=amount;sales_returns+=amount
+            row['sold_quantity']-=r['quantity'];row['sales_cents']-=amount
+            if r['cost_cents'] is None: row['unknown_quantity']-=r['quantity']
+            else:
+                row['known_sales_cents']-=amount;row['estimated_cost_cents']-=r['quantity']*r['cost_cents']
     rows=[]
     for row in products.values():
-        if not (row['sold_quantity'] or row['purchased_quantity'] or row['last_cost_cents'] is not None): continue
+        if not (row['sold_quantity'] or row['purchased_quantity'] or row['sales_cents'] or row['known_sales_cents'] or row['estimated_cost_cents'] or row['last_cost_cents'] is not None): continue
         row['profit_cents']=row['known_sales_cents']-row['estimated_cost_cents']
         row['unknown_sales_cents']=row['sales_cents']-row['known_sales_cents']
         rows.append(row)
     rows.sort(key=lambda r:r['id'])
     known=sum(r['known_sales_cents'] for r in rows);cost=sum(r['estimated_cost_cents'] for r in rows)
     return dict(start_date=start,end_date=end,reference_date=reference,total=len(rows),offset=offset,
-                sales_cents=total_sales,known_sales_cents=known,unknown_sales_cents=total_sales-known,
+                sales_cents=total_sales,sales_returns_cents=sales_returns,known_sales_cents=known,unknown_sales_cents=total_sales-known,
                 unitemized_sales_cents=unitemized,estimated_cost_cents=cost,profit_cents=known-cost,
                 rows=rows[offset:offset+50])
 

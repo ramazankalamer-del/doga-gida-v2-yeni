@@ -1,3 +1,4 @@
+import commercial_returns
 from datetime import date
 from typing import Literal
 from fastapi import Depends, HTTPException, Query
@@ -22,9 +23,10 @@ def register(app, env):
             rows=[]
             for order in db.execute("SELECT o.id,o.customer_id,o.date,o.due_date,o.due_version,o.amount_cents,c.name customer,c.phone FROM orders o JOIN customers c ON c.id=o.customer_id WHERE o.date<=? AND o.status!='İptal edildi' AND NOT EXISTS(SELECT 1 FROM order_cancellations x WHERE x.order_id=o.id) ORDER BY o.date,o.id",(reference,)):
                 credit=credits.get(order['customer_id'],0)
-                used=min(credit,order['amount_cents'])
+                net=order['amount_cents']-commercial_returns.returned_amount(db,'sale',order['id'],reference)
+                used=min(credit,net)
                 credits[order['customer_id']]=credit-used
-                remaining=order['amount_cents']-used
+                remaining=net-used
                 if not remaining: continue
                 due=order['due_date']
                 state='undated' if not due else 'overdue' if due<reference else 'today' if due==reference else 'upcoming'

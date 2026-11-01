@@ -1,3 +1,4 @@
+import commercial_returns
 """Read-only customer ledger derived from recorded orders and collections."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -26,7 +27,8 @@ def build_statement(db,customer,start_date=None,end_date=None):
         add(row['date'],'collection',row['id'],0,row['amount_cents'],method+(' · '+row['note'] if row['note'] else ''),'İptal edildi' if row['cancelled_at'] else 'Geçerli')
         if row['cancelled_at']:
             add(local_day(row['cancelled_at']),'collection_cancel',row['id'],row['amount_cents'],0,row['reason'],'İptal edildi')
-    rank={'order':0,'collection':1,'order_cancel':2,'collection_cancel':3}
+    events.extend(commercial_returns.ledger_events(db,'sale',customer['id']))
+    rank={'order':0,'collection':1,'sales_return':2,'sales_return_cancel':3,'order_cancel':4,'collection_cancel':5}
     events.sort(key=lambda row:(row['date'],rank[row['kind']],row['record_id']))
     start=start_date.isoformat() if start_date else None
     end=end_date.isoformat() if end_date else None
