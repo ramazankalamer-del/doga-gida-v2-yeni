@@ -1,0 +1,13 @@
+import {useEffect,useRef,useState} from 'react';
+import type {VisitRequest} from './CustomerVisits';
+type Summary={date:string;customers:number;visited:number;remaining:number;order_count:number;sales_cents:number;collection_count:number;collections_cents:number};
+const money=(cents:number)=>new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY'}).format(cents/100);
+export default function DailyRouteSummary({date,unassigned,request,refreshToken}:{date:string;unassigned:boolean;request:VisitRequest;refreshToken:string}){
+ const [data,setData]=useState<Summary|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);const sequence=useRef(0);
+ useEffect(()=>{const id=++sequence.current;setLoading(true);setError('');setData(null);
+ request<Summary>(`daily-route-summary?visit_date=${date}&unassigned=${unassigned}`).then(row=>{if(sequence.current===id)setData(row);}).catch(e=>{if(sequence.current===id)setError((e as Error).message);}).finally(()=>{if(sequence.current===id)setLoading(false);});return()=>{sequence.current++;};},[date,unassigned,request,refreshToken,revision]);
+ return <section className="panel daily-route-summary" aria-label="Günlük rota özeti"><div className="panel-head"><div><h2>Günlük rota özeti</h2><p>{new Date(date+'T12:00:00Z').toLocaleDateString('tr-TR',{timeZone:'Europe/Istanbul'})} · {unassigned?'Rota günü atanmayan müşteriler':'Seçili günün rota müşterileri'}</p></div><button className="secondary" disabled={loading} onClick={()=>setRevision(v=>v+1)}>Özeti yenile</button></div>
+ <p className="order-help">Güncel rota planındaki müşterilerin seçili tarih kayıtlarıdır. Arama, GPS ve ziyaret filtreleri bu toplamları değiştirmez.</p>
+ {loading?<p role="status">Rota özeti yükleniyor…</p>:error?<p className="error" role="alert">{error}</p>:data&&<><div className="route-summary-grid"><div><span>Rota müşterisi</span><strong>{data.customers}</strong></div><div><span>Ziyaret edildi</span><strong>{data.visited}</strong></div><div><span>Kalan ziyaret</span><strong>{data.remaining}</strong></div><div><span>Satış toplamı</span><strong>{money(data.sales_cents)}</strong><small>{data.order_count} geçerli sipariş</small></div><div><span>Tahsilat toplamı</span><strong>{money(data.collections_cents)}</strong><small>{data.collection_count} geçerli tahsilat</small></div></div><p className="order-help">Satış, seçili tarihte oluşturulan geçerli sipariş toplamıdır. İptal edilen işlemler ve müşteriye bağlanmamış tahsilatlar dahil değildir. Satış veya tahsilat kaydı müşteriyi otomatik ziyaret edildi yapmaz.</p></>}
+ </section>;
+}

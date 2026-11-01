@@ -397,3 +397,9 @@ Notlar müşteri/tarih bazındadır. Son değiştiren kullanıcı ve saat göste
 Müşteri listesinde, müşteri kartında veya harita/rota müşteri bilgisinde **Ziyaret geçmişi** seçin. Her kayıtlı tarihin son durumu; ziyaret notu, edilememe nedeni, son kaydı yapan kişi ve İstanbul saatinde kayıt zamanı ile yeniden eskiye gösterilir. Aynı gündeki tüm düzeltmeler ayrı ziyaret olarak sayılmaz. Hiç kayıt girilmemiş günler geçmişe eklenmez.
 
 Başlangıç/bitiş tarihleri isteğe bağlıdır, sınır günler dahildir. Alanları boş bırakıp **Geçmişi göster** seçmek tüm tarihleri gösterir. Liste 50 kayıtlık sayfalara ayrılır; sayaçlar seçili tarih aralığının tamamını kapsar. Ekran tüm oturum açmış roller için salt okunurdur; kayıt veya müşteri kartındaki kaydedilmemiş bilgileri değiştirmez.
+
+## Günlük rota özeti
+
+Günlük rota ekranındaki özet; seçili tarihin gününe güncel planda atanmış müşterilerin sayısını, ziyaret edilen/kalan sayılarını, satış ve tahsilat toplamlarını gösterir. **Günü atanmayan müşteriler** seçildiğinde yalnızca gün atanmamış müşteriler kapsanır. Arama, GPS ve ziyaret filtresi özet toplamlarını değiştirmez. **Özeti yenile** sunucudan güncel toplamı alır; ziyaret kaydı ve rota değişiklikleri özeti yeniden yükler.
+
+Satış, seçili tarihte oluşturulan ve halen geçerli olan siparişlerin kuruş bazında toplamıdır; bekleyen siparişler de dahildir. İptal edilen sipariş ve tahsilatlar, farklı tarihli işlemler, rota dışı müşteriler ve müşteriye bağlanmamış eski tahsilatlar dahil edilmez. İptal daha sonra yapılsa da işlem özgün gün toplamından çıkarılır; bu özet dönem muhasebe ekstresi değildir. Satış/tahsilat kaydı otomatik ziyaret oluşturmaz. Geçmiş tarihler güncel rota planına göre hesaplanır. Özet salt okunurdur, tüm oturum açmış roller görüntüleyebilir.

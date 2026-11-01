@@ -386,6 +386,23 @@ def customer_visits(visit_date:date,user=Depends(auth.current_user)):
     with database() as db:
         return [dict(row) for row in db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE visit_date=?',(visit_date.isoformat(),))]
 
+@app.get('/api/daily-route-summary')
+def daily_route_summary(visit_date:date,unassigned:bool=False,user=Depends(auth.current_user)):
+    day=visit_date.isoformat()
+    with database() as db:
+        db.execute('BEGIN')
+        if unassigned:
+            scope='SELECT c.id FROM customers c WHERE NOT EXISTS(SELECT 1 FROM customer_route_days d WHERE d.customer_id=c.id)'
+            params=[]
+        else:
+            scope='SELECT c.id FROM customers c WHERE EXISTS(SELECT 1 FROM customer_route_days d WHERE d.customer_id=c.id AND d.weekday=?)'
+            params=[visit_date.isoweekday()]
+        customers=db.execute(f'SELECT COUNT(*) FROM ({scope})',params).fetchone()[0]
+        visited=db.execute(f'SELECT COUNT(*) FROM customer_visits WHERE customer_id IN ({scope}) AND visit_date=? AND visited=1',[*params,day]).fetchone()[0]
+        orders=db.execute(f"SELECT COUNT(*) count,COALESCE(SUM(amount_cents),0) amount FROM orders WHERE customer_id IN ({scope}) AND date=? AND status!='İptal edildi' AND NOT EXISTS(SELECT 1 FROM order_cancellations x WHERE x.order_id=orders.id)",[*params,day]).fetchone()
+        collected=db.execute(f'SELECT COUNT(*) count,COALESCE(SUM(amount_cents),0) amount FROM collections WHERE customer_id IN ({scope}) AND date=? AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=collections.id)',[*params,day]).fetchone()
+        return {'date':day,'unassigned':unassigned,'customers':customers,'visited':visited,'remaining':customers-visited,'order_count':orders['count'],'sales_cents':orders['amount'],'collection_count':collected['count'],'collections_cents':collected['amount']}
+
 @app.get('/api/customers/{customer_id}/visits')
 def customer_visit_history(customer_id:int,start_date:date|None=None,end_date:date|None=None,offset:int=Query(default=0,ge=0),limit:int=Query(default=50,ge=1,le=100),user=Depends(auth.current_user)):
     if start_date and end_date and start_date>end_date:
