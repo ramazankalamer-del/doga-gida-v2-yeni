@@ -43,7 +43,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_visits'").fetchone()):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -98,6 +98,11 @@ def initialize():
             visited INTEGER NOT NULL CHECK(visited IN (0,1)), version INTEGER NOT NULL,
             updated_by INTEGER NOT NULL REFERENCES users(id), updated_at TEXT NOT NULL,
             UNIQUE(customer_id,visit_date,version));''')
+        for table in ('customer_visits','customer_visit_events'):
+            visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
+            for column in ('note','reason'):
+                if column not in visit_columns:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         for column in ('latitude', 'longitude'):
             if column not in customer_columns:
                 db.execute(f'ALTER TABLE customers ADD COLUMN {column} REAL')
@@ -358,6 +363,20 @@ def update_route_days(customer_id:int,item:RouteDaysUpdate,user=Depends(auth.wri
         return customer_dict(db,db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
 
 class VisitInput(BaseModel):
+    note: str = Field(default='',max_length=1000,strict=True)
+    reason: str = Field(default='',max_length=300,strict=True)
+
+    @field_validator('note','reason')
+    @classmethod
+    def trim_visit_text(cls,value):
+        return value.strip()
+
+    @model_validator(mode='after')
+    def validate_visit_reason(self):
+        if self.visited and self.reason:
+            raise ValueError('Ziyaret edilen müşteri için ziyaret edilememe nedeni girilemez.')
+        return self
+
     visit_date: date
     visited: bool = Field(strict=True)
     expected_version: int = Field(ge=0,strict=True)
@@ -382,9 +401,11 @@ def save_customer_visit(customer_id:int,item:VisitInput,user=Depends(auth.writer
             raise HTTPException(409,'Ziyaret durumu değişti. Ziyaretleri yenileyip yeniden deneyin.')
         version=item.expected_version+1
         stamp=datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()
-        values=(customer_id,day,int(item.visited),version,user['id'],stamp)
-        db.execute('INSERT INTO customer_visits VALUES(?,?,?,?,?,?) ON CONFLICT(customer_id,visit_date) DO UPDATE SET visited=excluded.visited,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at',values)
-        db.execute('INSERT INTO customer_visit_events(customer_id,visit_date,visited,version,updated_by,updated_at) VALUES(?,?,?,?,?,?)',values)
+        note=item.note if 'note' in item.model_fields_set else (old['note'] if old else '')
+        reason='' if item.visited else (item.reason if 'reason' in item.model_fields_set else (old['reason'] if old else ''))
+        values=(customer_id,day,int(item.visited),version,user['id'],stamp,note,reason)
+        db.execute('INSERT INTO customer_visits(customer_id,visit_date,visited,version,updated_by,updated_at,note,reason) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(customer_id,visit_date) DO UPDATE SET visited=excluded.visited,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at,note=excluded.note,reason=excluded.reason',values)
+        db.execute('INSERT INTO customer_visit_events(customer_id,visit_date,visited,version,updated_by,updated_at,note,reason) VALUES(?,?,?,?,?,?,?,?)',values)
         return dict(db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE customer_id=? AND visit_date=?',(customer_id,day)).fetchone())
 
 @app.get('/api/customers/{customer_id}/statement')

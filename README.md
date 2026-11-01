@@ -385,3 +385,9 @@ Günlük rota ekranında **Ziyaret tarihi → Tarihi göster** ile tarih seçili
 Ziyaret durumu müşteri ve kesin takvim tarihi bazında ortak şirket kaydıdır, kullanıcıya özel değildir. Başka haftaya taşınmaz. Geçmiş tarih kayıtları görüntülenebilir ve yetkili kullanıcılarca düzeltilebilir; gelecek tarihe kayıt engellenir. Geçmiş günün müşteri listesi güncel haftalık plana göre oluşturulur; geçmiş planın anlık kopyası tutulmaz. Rota günleri sonradan değişse de eski ziyaret kayıtları veritabanında korunur.
 
 Yönetici ve personel durumu değiştirebilir, salt okunur kullanıcı görüntüler. Son kaydı yapan kullanıcı ve İstanbul saati gösterilir. Her değişiklik ayrıca olay kaydında tutulur. Ziyaret sürümü eşzamanlı eski bir güncellemenin üzerine yazmayı engeller; çakışmada **Ziyaretleri yenile** seçilir. Ziyaret yazımı ve olay kaydı tek veritabanı işlemidir; satış, tahsilat ve stok değiştirilmez. Eski veritabanı ilk güncellemeden önce yedeklenir.
+
+## Ziyaret notu ve edilememe nedeni
+
+Günlük rotada tarih ve müşteri seçip **Müşteri ziyaret durumu**, **Ziyaret notu** (en fazla 1000 karakter) ve ziyaret edilmedi için **Ziyaret edilememe nedeni** (en fazla 300 karakter) alanlarını doldurun; **Ziyaret kaydını kaydet** seçin. Açıklamalar isteğe bağlıdır; boş kaydetmek alanı temizler. Durum ve metinler aynı kayıt içinde saklanır. Ziyaret edildi seçildiğinde edilememe nedeni temizlenir, ziyaret notu korunur.
+
+Notlar müşteri/tarih bazındadır. Son değiştiren kullanıcı ve saat gösterilir; her değişikliğin açıklama anlık kopyası olay kaydında korunur. Salt okunur kullanıcılar açıklamaları görebilir fakat değiştiremez. Eski istemciler açıklama göndermeden durum güncellediğinde mevcut notlar korunur; ziyaret edildi durumuna geçiş her zaman edilememe nedenini temizler. Eski kayıtların açıklamaları boş başlatılır ve güncellemeden önce veritabanı yedeklenir.
