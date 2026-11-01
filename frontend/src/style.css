@@ -22,3 +22,5 @@ button.edit-action:focus-visible{outline-color:#a16207}
 .order-actions{display:flex;flex-direction:column;align-items:flex-start;gap:8px}.order-actions button{white-space:nowrap}
 
 .sidebar{overflow-y:auto}.stock-in{color:#23683e}.stock-out{color:#a43d2a}
+
+.record-link{border:0;background:transparent;color:#245e48;font:inherit;font-weight:600;text-align:left;padding:4px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.record-link:hover{color:#123b2b}.record-link:focus-visible{outline:2px solid #245e48;outline-offset:3px}.record-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:6px}.context-filter{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 24px;background:#f2f7f3;border-bottom:1px solid #e1e8e2}

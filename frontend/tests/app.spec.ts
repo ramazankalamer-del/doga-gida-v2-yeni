@@ -18,6 +18,8 @@ test('panel, müşteri ve ürün ekleme; arama ve kalıcılık',async({page},inf
  await page.getByRole('textbox',{name:'Listede ara'}).fill('Örnek E2E '+info.project.name);
  await expect(page.locator('tbody tr')).toHaveCount(1);
  await page.reload();
+ await expect(page.getByRole('heading',{name:'Müşteriler.'})).toBeVisible();
+ await page.goto('/#dashboard');
  await page.getByRole('button',{name:'Yeni ürün',exact:true}).click();
  await page.getByLabel('Ürün adı').fill('Örnek E2E Ürün '+info.project.name);
  await page.getByLabel('Ürün kodu').fill('E2E-'+info.project.name+'-'+Date.now());
@@ -32,7 +34,7 @@ test('panel, müşteri ve ürün ekleme; arama ve kalıcılık',async({page},inf
  await expect(page.locator('tbody')).toContainText('42,75');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
  await page.reload();
- await page.getByRole('button',{name:'Tüm ürünleri görüntüle'}).click();
+ await expect(page.getByRole('heading',{name:'Ürünler ve stok.'})).toBeVisible();
  await expect(page.getByText('Örnek E2E Ürün '+info.project.name,{exact:true})).toBeVisible();
 });
 
@@ -50,7 +52,7 @@ test('salt okunur giriş, oturum kalıcılığı ve çıkış',async({page})=>{
  await page.getByRole('button',{name:'Müşterileri görüntüle',exact:true}).click();
  await expect(page.getByRole('button',{name:'Müşteri ekle',exact:true})).toHaveCount(0);
  await page.reload();
- await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Müşteriler.'})).toBeVisible();
  if(test.info().project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
  await page.getByRole('button',{name:'Çıkış yap'}).click();
  await expect(page.getByRole('button',{name:'Giriş yap',exact:true})).toBeVisible();
@@ -331,4 +333,43 @@ test('stok girişi, hareket kaynakları, filtre ve kalıcılık',async({page},in
  await page.getByLabel('Ürüne göre filtrele',{exact:true}).selectOption('1');
  await expect(page.getByText(note,{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+});
+
+
+test('kayıt bağlantıları, filtre kalıcılığı ve geri gezinme',async({page},info)=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await page.getByRole('button',{name:'Örnek Bahar Market',exact:true}).first().click();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.reload();
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.getByRole('button',{name:'Tüm siparişleri göster'}).click();
+ await expect(page).toHaveURL(/#orders$/);
+ await page.goBack();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.goto('/#customers');
+ const customer=page.locator('tbody tr').filter({hasText:'Örnek Bahar Market'});
+ await customer.getByRole('button',{name:'Tahsilat ve bakiye',exact:true}).click();
+ await expect(page.getByLabel('Müşteriye göre filtrele',{exact:true})).toHaveValue('1');
+ await page.reload();
+ await expect(page.getByLabel('Müşteriye göre filtrele',{exact:true})).toHaveValue('1');
+ const me=await (await page.request.get('/api/auth/me')).json();
+ const created=await page.request.post('/api/orders',{headers:{'X-CSRF-Token':me.csrf},data:{customer_id:1,request_id:crypto.randomUUID(),items:[{product_id:1,quantity:1}]}});
+ expect(created.status()).toBe(201);
+ await page.goto('/#products');
+ const product=page.locator('tbody tr').filter({hasText:'DG-001'});
+ await product.getByRole('button',{name:'Stok hareketleri',exact:true}).click();
+ await expect(page.getByLabel('Ürüne göre filtrele',{exact:true})).toHaveValue('1');
+ await page.reload();
+ await expect(page.getByLabel('Ürüne göre filtrele',{exact:true})).toHaveValue('1');
+ const orderLink=page.getByRole('button',{name:/^DG-\d+$/}).first();
+ await orderLink.click();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+ await page.screenshot({path:info.outputPath('linked-order.png'),fullPage:true});
 });
