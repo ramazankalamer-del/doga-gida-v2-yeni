@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal, Annotated
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, HTMLResponse
 import auth
@@ -385,6 +385,25 @@ class VisitInput(BaseModel):
 def customer_visits(visit_date:date,user=Depends(auth.current_user)):
     with database() as db:
         return [dict(row) for row in db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE visit_date=?',(visit_date.isoformat(),))]
+
+@app.get('/api/customers/{customer_id}/visits')
+def customer_visit_history(customer_id:int,start_date:date|None=None,end_date:date|None=None,offset:int=Query(default=0,ge=0),limit:int=Query(default=50,ge=1,le=100),user=Depends(auth.current_user)):
+    if start_date and end_date and start_date>end_date:
+        raise HTTPException(422,'Başlangıç tarihi bitiş tarihinden sonra olamaz.')
+    with database() as db:
+        db.execute('BEGIN')
+        customer=db.execute('SELECT id,name FROM customers WHERE id=?',(customer_id,)).fetchone()
+        if not customer:
+            raise HTTPException(404,'Müşteri bulunamadı.')
+        clauses=['v.customer_id=?'];params=[customer_id]
+        if start_date:
+            clauses.append('v.visit_date>=?');params.append(start_date.isoformat())
+        if end_date:
+            clauses.append('v.visit_date<=?');params.append(end_date.isoformat())
+        where=' AND '.join(clauses)
+        totals=db.execute(f'SELECT COUNT(*) total,COALESCE(SUM(visited),0) visited FROM customer_visits v WHERE {where}',params).fetchone()
+        rows=db.execute(f'SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE {where} ORDER BY v.visit_date DESC LIMIT ? OFFSET ?',[*params,limit,offset]).fetchall()
+        return {'customer':dict(customer),'total':totals['total'],'visited':totals['visited'],'not_visited':totals['total']-totals['visited'],'offset':offset,'limit':limit,'visits':[dict(row) for row in rows]}
 
 @app.post('/api/customers/{customer_id}/visit')
 def save_customer_visit(customer_id:int,item:VisitInput,user=Depends(auth.writer)):

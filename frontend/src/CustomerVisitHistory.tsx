@@ -1,0 +1,20 @@
+import {useEffect,useRef,useState} from 'react';
+import {useCustomerDialog} from './useCustomerDialog';
+import type {Visit,VisitRequest} from './CustomerVisits';
+type History={total:number;visited:number;not_visited:number;offset:number;limit:number;visits:Visit[]};
+const day=(value:string)=>new Date(value+'T12:00:00Z').toLocaleDateString('tr-TR',{timeZone:'Europe/Istanbul'});
+export default function CustomerVisitHistory({customer,request,onClose}:{customer:{id:number;name:string};request:VisitRequest;onClose:()=>void}){
+ const [data,setData]=useState<History|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
+ const [range,setRange]=useState({start:'',end:'',offset:0,revision:0});const sequence=useRef(0),dialog=useCustomerDialog(onClose);
+ useEffect(()=>{const id=++sequence.current;setLoading(true);setError('');setData(null);
+ const query=new URLSearchParams({offset:String(range.offset),limit:'50'});if(range.start)query.set('start_date',range.start);if(range.end)query.set('end_date',range.end);
+ request<History>(`customers/${customer.id}/visits?${query}`).then(result=>{if(id===sequence.current)setData(result);}).catch(e=>{if(id===sequence.current)setError((e as Error).message);}).finally(()=>{if(id===sequence.current)setLoading(false);});return()=>{sequence.current++;};},[customer.id,request,range]);
+ return <div className="modal-backdrop customer-dialog-backdrop"><section ref={dialog} className="modal customer-statement-modal" role="dialog" aria-modal="true" aria-labelledby="visit-history-title"><div className="panel-head"><div><h2 id="visit-history-title">Ziyaret geçmişi</h2><p>{customer.name}</p></div><button className="secondary" onClick={onClose}>Kapat</button></div>
+ <div className="statement-content"><form className="statement-filter" onSubmit={e=>{e.preventDefault();const values=new FormData(e.currentTarget),start=String(values.get('start')??''),end=String(values.get('end')??'');if(start&&end&&start>end){setError('Başlangıç tarihi bitiş tarihinden sonra olamaz.');return;}setRange({start,end,offset:0,revision:range.revision+1});}}><label>Başlangıç tarihi<input name="start" type="date"/></label><label>Bitiş tarihi<input name="end" type="date"/></label><button className="secondary" disabled={loading}>Geçmişi göster</button></form>
+ <p className="order-help">Her tarih için son kaydedilen durum gösterilir. Kayıt girilmeyen günler geçmişe eklenmez. Sıralama yeniden eskiye doğrudur.</p>
+ {error&&<div className="error" role="alert">{error}<button className="secondary" disabled={loading} onClick={()=>setRange(old=>({...old,revision:old.revision+1}))}>Yeniden yükle</button></div>}
+ {loading?<p role="status">Ziyaret geçmişi yükleniyor…</p>:data&&<><div className="map-summary"><span>{data.total} kayıtlı gün</span><span>{data.visited} ziyaret edildi</span><span>{data.not_visited} ziyaret edilmedi</span></div>
+ <div className="table-wrap"><table><thead><tr><th>ZİYARET TARİHİ</th><th>DURUM</th><th>NOT / NEDEN</th><th>SON KAYIT</th></tr></thead><tbody>{data.visits.map(row=><tr key={row.visit_date}><td>{day(row.visit_date)}</td><td>{row.visited?'Ziyaret edildi':'Ziyaret edilmedi'}</td><td className="visit-history-text"><strong>Ziyaret notu</strong><p>{row.note||'Not eklenmedi.'}</p>{!row.visited&&<><strong>Ziyaret edilememe nedeni</strong><p>{row.reason||'Neden belirtilmedi.'}</p></>}</td><td>{row.updated_username}<small>{new Date(row.updated_at).toLocaleString('tr-TR',{timeZone:'Europe/Istanbul'})}</small></td></tr>)}</tbody></table>{!data.total&&<p className="empty">Bu tarih aralığında ziyaret kaydı yok.</p>}</div>
+ <div className="form-actions"><button className="secondary" disabled={!data.offset} onClick={()=>setRange(old=>({...old,offset:Math.max(0,old.offset-50)}))}>Önceki sayfa</button><span>{data.total?data.offset+1:0}–{Math.min(data.offset+data.visits.length,data.total)} / {data.total}</span><button className="secondary" disabled={data.offset+data.visits.length>=data.total} onClick={()=>setRange(old=>({...old,offset:old.offset+50}))}>Sonraki sayfa</button></div></>}
+ </div></section></div>;
+}

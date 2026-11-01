@@ -391,3 +391,9 @@ Yönetici ve personel durumu değiştirebilir, salt okunur kullanıcı görünt�
 Günlük rotada tarih ve müşteri seçip **Müşteri ziyaret durumu**, **Ziyaret notu** (en fazla 1000 karakter) ve ziyaret edilmedi için **Ziyaret edilememe nedeni** (en fazla 300 karakter) alanlarını doldurun; **Ziyaret kaydını kaydet** seçin. Açıklamalar isteğe bağlıdır; boş kaydetmek alanı temizler. Durum ve metinler aynı kayıt içinde saklanır. Ziyaret edildi seçildiğinde edilememe nedeni temizlenir, ziyaret notu korunur.
 
 Notlar müşteri/tarih bazındadır. Son değiştiren kullanıcı ve saat gösterilir; her değişikliğin açıklama anlık kopyası olay kaydında korunur. Salt okunur kullanıcılar açıklamaları görebilir fakat değiştiremez. Eski istemciler açıklama göndermeden durum güncellediğinde mevcut notlar korunur; ziyaret edildi durumuna geçiş her zaman edilememe nedenini temizler. Eski kayıtların açıklamaları boş başlatılır ve güncellemeden önce veritabanı yedeklenir.
+
+## Müşteri ziyaret geçmişi
+
+Müşteri listesinde, müşteri kartında veya harita/rota müşteri bilgisinde **Ziyaret geçmişi** seçin. Her kayıtlı tarihin son durumu; ziyaret notu, edilememe nedeni, son kaydı yapan kişi ve İstanbul saatinde kayıt zamanı ile yeniden eskiye gösterilir. Aynı gündeki tüm düzeltmeler ayrı ziyaret olarak sayılmaz. Hiç kayıt girilmemiş günler geçmişe eklenmez.
+
+Başlangıç/bitiş tarihleri isteğe bağlıdır, sınır günler dahildir. Alanları boş bırakıp **Geçmişi göster** seçmek tüm tarihleri gösterir. Liste 50 kayıtlık sayfalara ayrılır; sayaçlar seçili tarih aralığının tamamını kapsar. Ekran tüm oturum açmış roller için salt okunurdur; kayıt veya müşteri kartındaki kaydedilmemiş bilgileri değiştirmez.
