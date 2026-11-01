@@ -413,3 +413,9 @@ Sıra şirket genelinde haftanın günü bazında saklanır; tek takvim tarihine
 Kayıtlı sıradaki rota dışı müşteriler gösterilmez; kayıtlı sırada bulunmayan yeni müşteriler müşteri numarasına göre sona eklenir. Yeniden atanan ve eski sırada hâlâ kaydı olan müşteri önceki konumunda görünür. Sırayı kaydetmek yalnızca güncel rota üyelerini saklar. Yönetici/personel düzenleyebilir, salt okunur kullanıcı sıralı listeyi görebilir. Sıralama sipariş, ziyaret, rota günü ataması veya tahsilat değiştirmez. Eski veritabanı güncelleme öncesi yedeklenir.
 
 Kaydederken rota üye kümesi ve sıra sürümü kilit altında doğrulanır. Başka kullanıcı sıra veya rota üyelerini değiştirdiyse eski form reddedilir; **Güncel sıralamayı yükle** müşteri listesini ve sırayı yeniler. Sıra ve sürüm tek veritabanı işleminde yazılır.
+
+## Seçili gün için tekrar ziyaret listesi
+
+Günlük rotada tarihi/günü seçip **Tekrar ziyaret listesi** düğmesine basın. Seçili tarihte ziyaret edildi kaydı olmayan tüm rota müşterileri listelenir: hem ziyaret edilmedi kaydı olanlar hem henüz kayıt girilmeyenler dahildir. Gün atanmayanlar görünümünden açılırsa seçili tarihin rota gününe dönülür. Başka gün seçildiğinde tekrar listesi o günün kayıtlarına göre güncellenir. Bu görünüm önceki günlerden biriken otomatik takip kuyruğu oluşturmaz.
+
+Kaydedilmiş rota sırası ve sıra numaraları korunur. Not/neden varsa satırda gösterilir; kaydı olmayan müşteri ayrıca belirtilir. Arama ve GPS filtresi kullanılabilir; ilk açılışta filtreler temizlenerek tüm kalan müşteriler gösterilir. Müşteri **Ziyaret edildi** kaydedilince tekrar listesinden çıkar. **Tüm rotaya dön** tüm müşterilere döner. Ziyaret verisi yüklenirken veya hata olduğunda doğrulanmamış tekrar listesi gösterilmez; **Ziyaretleri yenile** kullanılabilir. Günlük özet seçili günün tüm rota kapsamını göstermeye devam eder.
