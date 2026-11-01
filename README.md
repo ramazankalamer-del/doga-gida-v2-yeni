@@ -369,3 +369,11 @@ Stok ve hareket kaydı aynı SQLite işlemi içinde yazılır; hareket kaydı ha
 
 Hareket kayıtlarını düzenleme/silme, stok girişini iptal etme, depo/parti/son kullanma tarihi takibi, tedarikçi hesabı ve geçmişe dönük hareket oluşturma bu aşamada yoktur. Başlangıç kaydı mevcut stok durumudur; geçmiş bir fiziksel teslimatı temsil etmez.
 
+
+## Günlük rota
+
+Menüde **Günlük rota** seçin. Ekran İstanbul saatine göre bugünün haftalık ziyaret planıyla açılır. Pazartesi–Pazar düğmeleri müşteri sayısını gösterir; gün seçimi hem listeyi hem haritayı süzer. Birden fazla rota günü olan müşteri ilgili günlerin her birinde görünür. **Bugünün rotası** güncel güne döner.
+
+Arama ve GPS filtresi seçili gün içinde çalışır. GPS bilgisi eksik müşteriler listede kalır; uydurma konum işaretlenmez. **Günü atanmayan müşteriler** görünümünden müşteri seçip **Rota günü** kısayoluyla ziyaret günleri belirlenebilir. Kaydedilen değişiklikler listeye ve gün sayılarına yansır. Seçilen müşteri için hesap ekstresi ve yetkili kullanıcıların satış, tahsilat, rota günü ve kart düzenleme işlemleri kullanılabilir.
+
+Bu ekran haftalık ziyaret planını gösterir; yol tarifi, otomatik durak sıralaması veya ziyaret tamamlama kaydı üretmez. Rota, harita ve cihaz konumu için 18 ön yüz birim testi bulunur.
