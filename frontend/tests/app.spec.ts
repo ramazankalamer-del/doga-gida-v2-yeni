@@ -373,3 +373,61 @@ test('kayıt bağlantıları, filtre kalıcılığı ve geri gezinme',async({pag
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
  await page.screenshot({path:info.outputPath('linked-order.png'),fullPage:true});
 });
+
+
+test('doğrudan sipariş bağlantısında müşteri yükleme hatası ve tekrar deneme',async({page})=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await page.route('**/api/customers',r=>r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({detail:'Müşteri verisi yüklenemedi'})}));
+ await page.goto('/#orders?order=1');await page.reload();
+ await expect(page.getByRole('alert')).toContainText('Müşteri verisi yüklenemedi');
+ await expect(page.getByRole('button',{name:'Sipariş oluştur',exact:true})).toBeDisabled();
+ await page.unroute('**/api/customers');
+ await page.getByRole('button',{name:'Tekrar dene',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Sipariş oluştur',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Sipariş oluştur',exact:true}).click();
+ await expect(page.getByLabel('Müşteri',{exact:true}).locator('option')).toHaveCount(1+(await (await page.request.get('/api/customers')).json()).length);
+});
+
+test('tahsilat yanıtı beklenirken geri gezinme kaydı ve istek kimliğini korur',async({page},info)=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await page.goto('/#collections');
+ await page.getByLabel('Müşteriye göre filtrele',{exact:true}).selectOption('1');
+ let release!:()=>void,committed!:()=>void,handled!:()=>void;
+ const gate=new Promise<void>(r=>release=r),done=new Promise<void>(r=>committed=r),finished=new Promise<void>(r=>handled=r);
+ let requestId='';
+ await page.route('**/api/collections',async r=>{
+  if(r.request().method()!=='POST')return r.continue();
+  requestId=r.request().postDataJSON().request_id;
+  await r.fetch();committed();await gate;
+  try{await r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({detail:'Yanıt alınamadı; yeniden deneyin'})});}finally{handled();}
+ });
+ const note='Geri gezinme koruması '+info.project.name;
+ await page.getByRole('button',{name:'Tahsilat ekle',exact:true}).click();
+ await page.getByLabel('Tutar (₺)',{exact:true}).fill('12.34');
+ await page.getByLabel('Açıklama (isteğe bağlı)',{exact:true}).fill(note);
+ await page.getByRole('button',{name:'Tahsilatı kaydet',exact:true}).click();await done;
+ try{
+  await page.goBack();
+  await expect(page).toHaveURL(/#collections\?customer=1$/);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Kaydediliyor…',exact:true})).toBeDisabled();
+ }finally{release();await finished;}
+ await expect(page.getByRole('alert')).toContainText('Yanıt alınamadı');
+ await page.unroute('**/api/collections');
+ const retried=page.waitForRequest(r=>r.url().endsWith('/api/collections')&&r.method()==='POST');
+ await page.getByRole('button',{name:'Tahsilatı kaydet',exact:true}).click();
+ expect((await retried).postDataJSON().request_id).toBe(requestId);
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ const rows=await (await page.request.get('/api/collections')).json();
+ expect(rows.filter((c:{note:string})=>c.note===note)).toHaveLength(1);
+ await page.goto('/#orders');
+ await expect(page.getByRole('heading',{name:'Siparişler.'})).toBeVisible();
+});
