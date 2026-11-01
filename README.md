@@ -1,5 +1,13 @@
 # Doğa Gıda V2
 
+## Kullanıcı adı ve parola değiştirme
+
+**Giriş bilgileri unutulduysa:** normal sunucuyu kapatın ve yerel bilgisayarda `backend` klasöründen `python recover_account.py YONETICI_ID --port 8015` çalıştırın. Bu komut yalnızca aktif yönetici için, yalnızca `127.0.0.1` üzerinde 15 dakikalık tek kullanımlık bir kurtarma bağlantısı üretir. Bağlantıyı paylaşmayın; yeni bilgileri tarayıcıdaki kurtarma ekranında kendiniz girin. Normal sunucu açılışında kurtarma kapalıdır. Bağlantı kullanıldıktan, süresi dolduktan veya yönetici hesabı/parolası değiştikten sonra geçersizdir. Kayıt tamamlandığında tüm yönetici oturumları kapatılır; yeni bilgilerle giriş yapılır. Bağlantı parçası sunucu erişim kayıtlarına gönderilmez. `--link-file DOSYA` kullanılırsa bağlantı yalnızca belirtilen yerel dosyaya yazılır; bu dosyayı paylaşmayın veya kaynak depoya eklemeyin.
+
+Oturum açtıktan sonra **Hesabım** menüsünde mevcut parolanızı doğrulayarak kendi kullanıcı adınızı ve parolanızı değiştirebilirsiniz. Doğrudan bağlantı: `/#hesabim`; oturum kapalıysa önce giriş ekranı açılır. Yeni parola en az 12, en fazla 128 karakter olmalıdır. Kullanıcı adı baştaki/sondaki boşluklardan arındırılır ve küçük harfle saklanır. Değişiklik aynı kullanıcı kimliğinde gerçekleşir; rol, aktiflik ve geçmiş kayıt bağlantıları korunur.
+
+Başarılı değişiklik hesabın tüm açık oturumlarını kapatır; yeni bilgilerle tekrar giriş yapılır. Yanlış mevcut parola, alınmış kullanıcı adı ve geçersiz alanlar hesabı değiştirmez. Yanlış mevcut parola denemeleri hesap başına 15 dakikada 5 denemeyle sınırlanır. Kullanıcı pasife alınmış veya oturumu iptal edilmişse bekleyen değişiklik de reddedilir. Parolalar özetlenerek saklanır, yanıtlarda döndürülmez. Yeni parolayı doğrudan programdaki alana girin; sohbet üzerinden paylaşmayın.
+
 Türkçe ve mobil uyumlu React + TypeScript yönetim paneli; FastAPI ve SQLite backend.
 Bu ilk sürüm yalnızca örnek veriler içerir. Bu aşamada kullanıcı girişi ve sunucuda rol kontrolü eklendi. Canlı dağıtım henüz doğrulanmadı; geliştirme ve testlerde yalnızca örnek veri kullanın.
 

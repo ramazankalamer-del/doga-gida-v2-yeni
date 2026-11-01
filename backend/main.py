@@ -8,6 +8,7 @@ import sys
 import purchasing
 import receivables
 import trade_reports
+import account_settings
 import finance_export
 from decimal import Decimal
 from typing import Literal, Annotated
@@ -1126,6 +1127,7 @@ def dashboard(user=Depends(auth.current_user)):
 purchasing.register(app,sys.modules[__name__])
 receivables.register(app,sys.modules[__name__])
 trade_reports.register(app,sys.modules[__name__])
+account_settings.register(app,sys.modules[__name__])
 
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 if DIST.exists():
