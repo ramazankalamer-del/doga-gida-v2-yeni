@@ -43,7 +43,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_visits'").fetchone()):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -88,6 +88,16 @@ def initialize():
         db.execute('''CREATE TABLE IF NOT EXISTS customer_route_days(
             customer_id INTEGER NOT NULL REFERENCES customers(id),weekday INTEGER NOT NULL CHECK(weekday BETWEEN 1 AND 7),
             PRIMARY KEY(customer_id,weekday))''')
+        db.executescript('''CREATE TABLE IF NOT EXISTS customer_visits(
+            customer_id INTEGER NOT NULL REFERENCES customers(id), visit_date TEXT NOT NULL,
+            visited INTEGER NOT NULL CHECK(visited IN (0,1)), version INTEGER NOT NULL,
+            updated_by INTEGER NOT NULL REFERENCES users(id), updated_at TEXT NOT NULL,
+            PRIMARY KEY(customer_id,visit_date));
+        CREATE TABLE IF NOT EXISTS customer_visit_events(
+            id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id), visit_date TEXT NOT NULL,
+            visited INTEGER NOT NULL CHECK(visited IN (0,1)), version INTEGER NOT NULL,
+            updated_by INTEGER NOT NULL REFERENCES users(id), updated_at TEXT NOT NULL,
+            UNIQUE(customer_id,visit_date,version));''')
         for column in ('latitude', 'longitude'):
             if column not in customer_columns:
                 db.execute(f'ALTER TABLE customers ADD COLUMN {column} REAL')
@@ -346,6 +356,36 @@ def update_route_days(customer_id:int,item:RouteDaysUpdate,user=Depends(auth.wri
         save_route_days(db,customer_id,item.route_days)
         db.execute('UPDATE customers SET version=version+1 WHERE id=?',(customer_id,))
         return customer_dict(db,db.execute('SELECT * FROM customers WHERE id=?',(customer_id,)).fetchone())
+
+class VisitInput(BaseModel):
+    visit_date: date
+    visited: bool = Field(strict=True)
+    expected_version: int = Field(ge=0,strict=True)
+
+@app.get('/api/customer-visits')
+def customer_visits(visit_date:date,user=Depends(auth.current_user)):
+    with database() as db:
+        return [dict(row) for row in db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE visit_date=?',(visit_date.isoformat(),))]
+
+@app.post('/api/customers/{customer_id}/visit')
+def save_customer_visit(customer_id:int,item:VisitInput,user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        if item.visit_date.isoformat()>today():
+            raise HTTPException(422,'Gelecek tarih için ziyaret kaydedilemez.')
+        if not db.execute('SELECT 1 FROM customers WHERE id=?',(customer_id,)).fetchone():
+            raise HTTPException(404,'Müşteri bulunamadı.')
+        day=item.visit_date.isoformat()
+        old=db.execute('SELECT * FROM customer_visits WHERE customer_id=? AND visit_date=?',(customer_id,day)).fetchone()
+        if (old['version'] if old else 0)!=item.expected_version:
+            raise HTTPException(409,'Ziyaret durumu değişti. Ziyaretleri yenileyip yeniden deneyin.')
+        version=item.expected_version+1
+        stamp=datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()
+        values=(customer_id,day,int(item.visited),version,user['id'],stamp)
+        db.execute('INSERT INTO customer_visits VALUES(?,?,?,?,?,?) ON CONFLICT(customer_id,visit_date) DO UPDATE SET visited=excluded.visited,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at',values)
+        db.execute('INSERT INTO customer_visit_events(customer_id,visit_date,visited,version,updated_by,updated_at) VALUES(?,?,?,?,?,?)',values)
+        return dict(db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE customer_id=? AND visit_date=?',(customer_id,day)).fetchone())
 
 @app.get('/api/customers/{customer_id}/statement')
 def customer_statement(customer_id:int,start_date:date|None=None,end_date:date|None=None,user=Depends(auth.current_user)):

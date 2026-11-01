@@ -377,3 +377,11 @@ Menüde **Günlük rota** seçin. Ekran İstanbul saatine göre bugünün haftal
 Arama ve GPS filtresi seçili gün içinde çalışır. GPS bilgisi eksik müşteriler listede kalır; uydurma konum işaretlenmez. **Günü atanmayan müşteriler** görünümünden müşteri seçip **Rota günü** kısayoluyla ziyaret günleri belirlenebilir. Kaydedilen değişiklikler listeye ve gün sayılarına yansır. Seçilen müşteri için hesap ekstresi ve yetkili kullanıcıların satış, tahsilat, rota günü ve kart düzenleme işlemleri kullanılabilir.
 
 Bu ekran haftalık ziyaret planını gösterir; yol tarifi, otomatik durak sıralaması veya ziyaret tamamlama kaydı üretmez. Rota, harita ve cihaz konumu için 18 ön yüz birim testi bulunur.
+
+## Günlük ziyaret takibi
+
+Günlük rota ekranında **Ziyaret tarihi → Tarihi göster** ile tarih seçilir. Gün düğmeleri seçili tarihin haftasında gezinir; **Bugünün rotası** İstanbul takvimine göre bugüne döner. Müşteri seçilerek **Ziyaret edildi** işaretlenebilir veya **Ziyaret edilmedi** ile geri alınabilir. Sayaç ve ziyaret filtresi seçili müşteri kapsamına uygulanır; arama ve GPS filtresiyle birlikte listeyi ve haritayı süzer. Henüz kaydı olmayan müşteri ziyaret edilmedi kabul edilir.
+
+Ziyaret durumu müşteri ve kesin takvim tarihi bazında ortak şirket kaydıdır, kullanıcıya özel değildir. Başka haftaya taşınmaz. Geçmiş tarih kayıtları görüntülenebilir ve yetkili kullanıcılarca düzeltilebilir; gelecek tarihe kayıt engellenir. Geçmiş günün müşteri listesi güncel haftalık plana göre oluşturulur; geçmiş planın anlık kopyası tutulmaz. Rota günleri sonradan değişse de eski ziyaret kayıtları veritabanında korunur.
+
+Yönetici ve personel durumu değiştirebilir, salt okunur kullanıcı görüntüler. Son kaydı yapan kullanıcı ve İstanbul saati gösterilir. Her değişiklik ayrıca olay kaydında tutulur. Ziyaret sürümü eşzamanlı eski bir güncellemenin üzerine yazmayı engeller; çakışmada **Ziyaretleri yenile** seçilir. Ziyaret yazımı ve olay kaydı tek veritabanı işlemidir; satış, tahsilat ve stok değiştirilmez. Eski veritabanı ilk güncellemeden önce yedeklenir.

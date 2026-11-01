@@ -48,3 +48,11 @@ test('invalid weekday does not reveal customers from another route',()=>{
  const rows=[customer(1,[1])];
  for(const day of [0,8,-1,1.5,NaN])assert.deepEqual(dailyRouteCustomers(rows,day),[]);
 });
+import {istanbulDate,dateWeekday,routeDateForDay} from '../src/dailyRouteData.ts';
+test('visit date uses Istanbul calendar and weekdays stay in the selected week',()=>{
+ assert.equal(istanbulDate(new Date('2026-10-31T21:00:00Z')),'2026-11-01');
+ assert.equal(dateWeekday('2026-11-01'),7);
+ assert.equal(routeDateForDay('2026-11-01',1),'2026-10-26');
+ assert.equal(routeDateForDay('2027-01-01',1),'2026-12-28');
+ assert.equal(routeDateForDay('2028-03-01',2),'2028-02-29');
+});
