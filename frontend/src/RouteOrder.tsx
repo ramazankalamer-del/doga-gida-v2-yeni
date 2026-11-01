@@ -1,0 +1,19 @@
+import {useEffect,useRef,useState} from 'react';
+import {useCustomerDialog} from './useCustomerDialog';
+import type {VisitRequest} from './CustomerVisits';
+import type {MapCustomer} from './customerMapData';
+export type RouteOrderData={scope_id:number;version:number;customer_ids:number[]};
+export function useRouteOrder(scope:number,enabled:boolean,members:string,request:VisitRequest){
+ const [data,setData]=useState<RouteOrderData|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[revision,setRevision]=useState(0);const sequence=useRef(0);
+ useEffect(()=>{const id=++sequence.current;setData(null);setError('');if(!enabled){setLoading(false);return;}setLoading(true);request<RouteOrderData>(`route-order/${scope}`).then(row=>{if(id===sequence.current)setData(row);}).catch(e=>{if(id===sequence.current)setError((e as Error).message);}).finally(()=>{if(id===sequence.current)setLoading(false);});return()=>{sequence.current++;};},[scope,enabled,members,request,revision]);
+ return {data,loading,error,reload:()=>setRevision(v=>v+1),apply:setData};
+}
+export function orderedRouteCustomers(customers:MapCustomer[],ids:number[]):MapCustomer[]{
+ const positions=new Map(ids.map((id,index)=>[id,index]));return [...customers].sort((a,b)=>(positions.get(a.id)??Number.MAX_SAFE_INTEGER)-(positions.get(b.id)??Number.MAX_SAFE_INTEGER)||a.id-b.id);
+}
+export default function RouteOrder({customers,data,label,request,onClose,onSaved,onReload}:{customers:MapCustomer[];data:RouteOrderData;label:string;request:VisitRequest;onClose:()=>void;onSaved:(data:RouteOrderData)=>void;onReload:()=>void}){
+ const [ids,setIds]=useState(()=>orderedRouteCustomers(customers,data.customer_ids).map(c=>c.id)),[busy,setBusy]=useState(false),[error,setError]=useState('');const dialog=useCustomerDialog(onClose,busy);
+ const names=new Map(customers.map(c=>[c.id,c]));
+ function move(index:number,direction:number){setIds(old=>{const next=[...old],target=index+direction;if(target<0||target>=next.length)return old;[next[index],next[target]]=[next[target],next[index]];return next;});}
+ return <div className="modal-backdrop customer-dialog-backdrop"><section ref={dialog} className="modal route-order-modal" role="dialog" aria-modal="true" aria-labelledby="route-order-title"><div className="panel-head"><div><h2 id="route-order-title">Müşteri sırasını düzenle</h2><p>{label}</p></div><button className="secondary" disabled={busy} onClick={onClose}>Kapat</button></div><div className="route-order-content"><p className="order-help">Bu sıra haftalık rota gününe kaydedilir ve diğer haftalarda da kullanılır. Arama, GPS ve ziyaret filtrelerinden bağımsız tüm rota müşterileri gösterilir.</p><ol className="route-order-list">{ids.map((id,index)=><li key={id}><span><strong>{index+1}. {names.get(id)?.name??'Müşteri'}</strong><small>{names.get(id)?.district}</small></span><div><button type="button" className="secondary" aria-label={`${names.get(id)?.name} yukarı taşı`} disabled={busy||index===0} onClick={()=>move(index,-1)}>↑ Yukarı</button><button type="button" className="secondary" aria-label={`${names.get(id)?.name} aşağı taşı`} disabled={busy||index===ids.length-1} onClick={()=>move(index,1)}>↓ Aşağı</button></div></li>)}</ol>{!ids.length&&<p>Bu rotada müşteri yok.</p>}{error&&<div className="error" role="alert">{error}<button className="secondary" disabled={busy} onClick={onReload}>Güncel sıralamayı yükle</button></div>}<div className="form-actions"><button className="secondary" disabled={busy} onClick={onClose}>Vazgeç</button><button className="primary" disabled={busy||!ids.length} onClick={async()=>{setBusy(true);setError('');try{const result=await request<RouteOrderData>(`route-order/${data.scope_id}`,{customer_ids:ids,expected_version:data.version});onSaved(result);onClose();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>{busy?'Kaydediliyor…':'Sıralamayı kaydet'}</button></div></div></section></div>;
+}

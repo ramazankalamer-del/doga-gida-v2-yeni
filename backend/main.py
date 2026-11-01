@@ -43,7 +43,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -98,6 +98,12 @@ def initialize():
             visited INTEGER NOT NULL CHECK(visited IN (0,1)), version INTEGER NOT NULL,
             updated_by INTEGER NOT NULL REFERENCES users(id), updated_at TEXT NOT NULL,
             UNIQUE(customer_id,visit_date,version));''')
+        db.executescript('''CREATE TABLE IF NOT EXISTS route_order_versions(
+            scope_id INTEGER PRIMARY KEY CHECK(scope_id BETWEEN 0 AND 7),version INTEGER NOT NULL,
+            updated_by INTEGER NOT NULL REFERENCES users(id),updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS route_order_positions(
+            scope_id INTEGER NOT NULL REFERENCES route_order_versions(scope_id),customer_id INTEGER NOT NULL REFERENCES customers(id),
+            position INTEGER NOT NULL CHECK(position>=0),PRIMARY KEY(scope_id,customer_id),UNIQUE(scope_id,position));''')
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -385,6 +391,51 @@ class VisitInput(BaseModel):
 def customer_visits(visit_date:date,user=Depends(auth.current_user)):
     with database() as db:
         return [dict(row) for row in db.execute('SELECT v.*,u.username AS updated_username FROM customer_visits v JOIN users u ON u.id=v.updated_by WHERE visit_date=?',(visit_date.isoformat(),))]
+
+def route_order_members(db,scope_id):
+    if scope_id<0 or scope_id>7:
+        raise HTTPException(422,'Rota günü geçersiz.')
+    if scope_id==0:
+        return [row['id'] for row in db.execute('SELECT c.id FROM customers c WHERE NOT EXISTS(SELECT 1 FROM customer_route_days d WHERE d.customer_id=c.id) ORDER BY c.id')]
+    return [row['customer_id'] for row in db.execute('SELECT customer_id FROM customer_route_days WHERE weekday=? ORDER BY customer_id',(scope_id,))]
+
+def route_order_data(db,scope_id):
+    members=route_order_members(db,scope_id)
+    member_set=set(members)
+    stored=[row['customer_id'] for row in db.execute('SELECT customer_id FROM route_order_positions WHERE scope_id=? ORDER BY position',(scope_id,)) if row['customer_id'] in member_set]
+    stored_set=set(stored)
+    version=db.execute('SELECT version FROM route_order_versions WHERE scope_id=?',(scope_id,)).fetchone()
+    return {'scope_id':scope_id,'version':version['version'] if version else 0,'customer_ids':stored+[customer for customer in members if customer not in stored_set]}
+
+class RouteOrderInput(BaseModel):
+    customer_ids:list[Annotated[int,Field(strict=True,ge=1)]]=Field(max_length=10000)
+    expected_version:int=Field(strict=True,ge=0)
+
+    @field_validator('customer_ids')
+    @classmethod
+    def unique_route_customers(cls,values):
+        if len(set(values))!=len(values):
+            raise ValueError('Müşteri sıralamasında tekrar olamaz.')
+        return values
+
+@app.get('/api/route-order/{scope_id}')
+def get_route_order(scope_id:int,user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN')
+        return route_order_data(db,scope_id)
+
+@app.post('/api/route-order/{scope_id}')
+def save_route_order(scope_id:int,item:RouteOrderInput,user=Depends(auth.writer)):
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        require_active_writer(db,user['id'])
+        old=route_order_data(db,scope_id)
+        if old['version']!=item.expected_version or set(old['customer_ids'])!=set(item.customer_ids):
+            raise HTTPException(409,'Rota veya müşteri sırası değişti. Güncel sıralamayı yükleyip yeniden deneyin.')
+        db.execute('INSERT INTO route_order_versions VALUES(?,?,?,?) ON CONFLICT(scope_id) DO UPDATE SET version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at',(scope_id,item.expected_version+1,user['id'],datetime.now(ZoneInfo('Europe/Istanbul')).isoformat()))
+        db.execute('DELETE FROM route_order_positions WHERE scope_id=?',(scope_id,))
+        db.executemany('INSERT INTO route_order_positions VALUES(?,?,?)',[(scope_id,customer,index) for index,customer in enumerate(item.customer_ids)])
+        return route_order_data(db,scope_id)
 
 @app.get('/api/daily-route-summary')
 def daily_route_summary(visit_date:date,unassigned:bool=False,user=Depends(auth.current_user)):

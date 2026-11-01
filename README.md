@@ -403,3 +403,13 @@ Başlangıç/bitiş tarihleri isteğe bağlıdır, sınır günler dahildir. Ala
 Günlük rota ekranındaki özet; seçili tarihin gününe güncel planda atanmış müşterilerin sayısını, ziyaret edilen/kalan sayılarını, satış ve tahsilat toplamlarını gösterir. **Günü atanmayan müşteriler** seçildiğinde yalnızca gün atanmamış müşteriler kapsanır. Arama, GPS ve ziyaret filtresi özet toplamlarını değiştirmez. **Özeti yenile** sunucudan güncel toplamı alır; ziyaret kaydı ve rota değişiklikleri özeti yeniden yükler.
 
 Satış, seçili tarihte oluşturulan ve halen geçerli olan siparişlerin kuruş bazında toplamıdır; bekleyen siparişler de dahildir. İptal edilen sipariş ve tahsilatlar, farklı tarihli işlemler, rota dışı müşteriler ve müşteriye bağlanmamış eski tahsilatlar dahil edilmez. İptal daha sonra yapılsa da işlem özgün gün toplamından çıkarılır; bu özet dönem muhasebe ekstresi değildir. Satış/tahsilat kaydı otomatik ziyaret oluşturmaz. Geçmiş tarihler güncel rota planına göre hesaplanır. Özet salt okunurdur, tüm oturum açmış roller görüntüleyebilir.
+
+## Rotadaki müşterileri elle sıralama
+
+Günlük rotada gün seçip **Müşteri sırasını düzenle** düğmesini açın. Müşterileri **Yukarı / Aşağı** taşıyın ve **Sıralamayı kaydet** seçin. Kaydetmeden kapatmak veya vazgeçmek mevcut sırayı değiştirmez. İkiden az müşteri olduğunda düzenleme düğmesi kapalıdır. Gün atanmayan müşterilerin de ayrı sırası vardır.
+
+Sıra şirket genelinde haftanın günü bazında saklanır; tek takvim tarihine özel değildir. Başka haftanın aynı gününde de kullanılır. Arama, GPS ve ziyaret filtresi açık olsa bile düzenleme ekranı günün tüm müşterilerini içerir; gizlenen müşteriler sıralamadan düşmez. Liste sıra numaraları filtrede de asıl rota konumunu gösterir. Harita işaretleri yol çizgisi veya otomatik durak optimizasyonu üretmez.
+
+Kayıtlı sıradaki rota dışı müşteriler gösterilmez; kayıtlı sırada bulunmayan yeni müşteriler müşteri numarasına göre sona eklenir. Yeniden atanan ve eski sırada hâlâ kaydı olan müşteri önceki konumunda görünür. Sırayı kaydetmek yalnızca güncel rota üyelerini saklar. Yönetici/personel düzenleyebilir, salt okunur kullanıcı sıralı listeyi görebilir. Sıralama sipariş, ziyaret, rota günü ataması veya tahsilat değiştirmez. Eski veritabanı güncelleme öncesi yedeklenir.
+
+Kaydederken rota üye kümesi ve sıra sürümü kilit altında doğrulanır. Başka kullanıcı sıra veya rota üyelerini değiştirdiyse eski form reddedilir; **Güncel sıralamayı yükle** müşteri listesini ve sırayı yeniler. Sıra ve sürüm tek veritabanı işleminde yazılır.
