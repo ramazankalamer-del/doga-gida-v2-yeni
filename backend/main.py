@@ -4,6 +4,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import os
 import sqlite3
+import sys
+import purchasing
+import receivables
+import finance_export
 from decimal import Decimal
 from typing import Literal, Annotated
 from uuid import UUID
@@ -43,7 +47,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers')) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and {'due_date','due_version'} <= {row[1] for row in source.execute('PRAGMA table_info(orders)')} and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers','order_due_events',*purchasing.TABLES)) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -76,6 +80,8 @@ def initialize():
         if 'created_by' not in columns:
             db.execute('ALTER TABLE orders ADD COLUMN created_by INTEGER')
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS orders_request_id ON orders(request_id)')
+        if 'due_date' not in columns: db.execute('ALTER TABLE orders ADD COLUMN due_date TEXT')
+        if 'due_version' not in columns: db.execute('ALTER TABLE orders ADD COLUMN due_version INTEGER NOT NULL DEFAULT 0')
         collection_columns = {row['name'] for row in db.execute('PRAGMA table_info(collections)')}
         for name, definition in [('customer_id','INTEGER REFERENCES customers(id)'), ('request_id','TEXT'), ('created_by','INTEGER REFERENCES users(id)'), ('method','TEXT'), ('note',"TEXT NOT NULL DEFAULT ''"), ('created_at','TEXT')]:
             if name not in collection_columns:
@@ -121,6 +127,8 @@ def initialize():
             date TEXT NOT NULL,note TEXT NOT NULL,created_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,
             source_entry_id INTEGER NOT NULL UNIQUE REFERENCES finance_entries(id),target_entry_id INTEGER NOT NULL UNIQUE REFERENCES finance_entries(id),
             CHECK(source_account_id!=target_account_id));''')
+        purchasing.initialize(db)
+        receivables.initialize(db)
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -562,26 +570,44 @@ def finance_entry_dict(db,entry_id):
     transfer=db.execute('SELECT id FROM finance_transfers WHERE source_entry_id=? OR target_entry_id=?',(entry_id,entry_id)).fetchone()
     row['collection_id']=link['collection_id'] if link else None
     row['transfer_id']=transfer['id'] if transfer else None
+    payment=db.execute('SELECT id FROM supplier_payments WHERE finance_entry_id=?',(entry_id,)).fetchone()
+    row['supplier_payment_id']=payment['id'] if payment else None
     return row
+
+def finance_data(db,account_id=None,start_date=None,end_date=None,offset=0,export_all=False):
+    if start_date and end_date and start_date>end_date: raise HTTPException(422,'Tarih aralığı geçersiz.')
+    accounts=[{**dict(a),'balance_cents':finance_balance(db,a)} for a in db.execute('SELECT id,name,kind,opening_cents FROM finance_accounts ORDER BY id')]
+    if account_id is not None and not any(a['id']==account_id for a in accounts): raise HTTPException(404,'Hesap bulunamadı.')
+    clauses=['1=1'];params=[]
+    if account_id is not None: clauses.append('e.account_id=?');params.append(account_id)
+    if start_date: clauses.append('e.date>=?');params.append(start_date.isoformat())
+    if end_date: clauses.append('e.date<=?');params.append(end_date.isoformat())
+    where=' AND '.join(clauses)
+    total=db.execute(f'SELECT COUNT(*) FROM finance_entries e WHERE {where}',params).fetchone()[0]
+    sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND NOT EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
+    categories=[dict(row) for row in db.execute(f"SELECT e.category,COUNT(*) count,SUM(e.amount_cents) amount_cents FROM finance_entries e WHERE {where} AND e.kind='expense' AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) GROUP BY e.category ORDER BY amount_cents DESC,e.category",params)]
+    transfer_sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
+    limit_sql='' if export_all else 'LIMIT 50 OFFSET ?'
+    entries=[finance_entry_dict(db,row['id']) for row in db.execute(f'SELECT e.id FROM finance_entries e WHERE {where} ORDER BY e.date DESC,e.id DESC {limit_sql}',[*params,offset] if not export_all else params)]
+    return {'selected_account_id':account_id,'accounts':accounts,'entries':entries,'total':total,'offset':offset,'income_cents':sums.get('income',0),'expense_cents':sums.get('expense',0),'withdrawal_cents':sums.get('withdrawal',0),'expense_categories':categories,'transfer_in_cents':transfer_sums.get('income',0),'transfer_out_cents':transfer_sums.get('withdrawal',0)}
 
 @app.get('/api/finance')
 def list_finance(account_id:int|None=None,start_date:date|None=None,end_date:date|None=None,offset:int=Query(default=0,ge=0),user=Depends(auth.current_user)):
-    if start_date and end_date and start_date>end_date: raise HTTPException(422,'Tarih aralığı geçersiz.')
     with database() as db:
         db.execute('BEGIN')
-        accounts=[{**dict(a),'balance_cents':finance_balance(db,a)} for a in db.execute('SELECT id,name,kind,opening_cents FROM finance_accounts ORDER BY id')]
-        if account_id is not None and not any(a['id']==account_id for a in accounts): raise HTTPException(404,'Hesap bulunamadı.')
-        clauses=['1=1'];params=[]
-        if account_id is not None: clauses.append('e.account_id=?');params.append(account_id)
-        if start_date: clauses.append('e.date>=?');params.append(start_date.isoformat())
-        if end_date: clauses.append('e.date<=?');params.append(end_date.isoformat())
-        where=' AND '.join(clauses)
-        total=db.execute(f'SELECT COUNT(*) FROM finance_entries e WHERE {where}',params).fetchone()[0]
-        sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND NOT EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
-        categories=[dict(row) for row in db.execute(f"SELECT e.category,COUNT(*) count,SUM(e.amount_cents) amount_cents FROM finance_entries e WHERE {where} AND e.kind='expense' AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) GROUP BY e.category ORDER BY amount_cents DESC,e.category",params)]
-        transfer_sums={row['kind']:row['amount'] for row in db.execute(f'SELECT e.kind,SUM(e.amount_cents) amount FROM finance_entries e WHERE {where} AND NOT EXISTS(SELECT 1 FROM finance_cancellations x WHERE x.entry_id=e.id) AND EXISTS(SELECT 1 FROM finance_transfers t WHERE e.id IN (t.source_entry_id,t.target_entry_id)) GROUP BY e.kind',params)}
-        entries=[finance_entry_dict(db,row['id']) for row in db.execute(f'SELECT e.id FROM finance_entries e WHERE {where} ORDER BY e.date DESC,e.id DESC LIMIT 50 OFFSET ?',[*params,offset])]
-        return {'accounts':accounts,'entries':entries,'total':total,'offset':offset,'income_cents':sums.get('income',0),'expense_cents':sums.get('expense',0),'withdrawal_cents':sums.get('withdrawal',0),'expense_categories':categories,'transfer_in_cents':transfer_sums.get('income',0),'transfer_out_cents':transfer_sums.get('withdrawal',0)}
+        return finance_data(db,account_id,start_date,end_date,offset)
+
+@app.get('/api/finance/export')
+def export_finance(account_id:int|None=None,start_date:date|None=None,end_date:date|None=None,user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN');data=finance_data(db,account_id,start_date,end_date,export_all=True)
+    return Response(finance_export.xlsx(data,start_date,end_date),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="finans-{today()}.xlsx"'})
+
+@app.get('/api/finance/print',response_class=HTMLResponse)
+def print_finance(account_id:int|None=None,start_date:date|None=None,end_date:date|None=None,user=Depends(auth.current_user)):
+    with database() as db:
+        db.execute('BEGIN');data=finance_data(db,account_id,start_date,end_date,export_all=True)
+    return HTMLResponse(finance_export.printable(data,start_date,end_date,today()))
 
 @app.post('/api/finance/accounts')
 def create_finance_account(item:FinanceAccountInput,user=Depends(auth.administrator)):
@@ -635,6 +661,7 @@ def cancel_finance_row(db,entry_id,reason,user_id):
 def cancel_finance_entry(entry_id:int,item:FinanceCancellationInput,user=Depends(auth.administrator)):
     with database() as db:
         db.execute('BEGIN IMMEDIATE');require_active_admin(db,user['id'])
+        if db.execute('SELECT 1 FROM supplier_payments WHERE finance_entry_id=?',(entry_id,)).fetchone(): raise HTTPException(409,'Bu hareket tedarikçi ödemesidir. Tedarikçi ekranından iptal edin.')
         if db.execute('SELECT 1 FROM collection_finance_links WHERE entry_id=?',(entry_id,)).fetchone(): raise HTTPException(409,'Bu hareket tahsilata bağlıdır. Tahsilat ekranından iptal edin.')
         if db.execute('SELECT 1 FROM finance_transfers WHERE source_entry_id=? OR target_entry_id=?',(entry_id,entry_id)).fetchone(): raise HTTPException(409,'Aktarımın iki ayağı birlikte iptal edilmelidir.')
         return cancel_finance_row(db,entry_id,item.reason,user['id'])
@@ -878,6 +905,7 @@ class OrderLine(BaseModel):
     quantity: int = Field(gt=0, le=10000000, strict=True)
 
 class OrderInput(BaseModel):
+    due_date:date|None=None
     customer_id: int = Field(gt=0, strict=True)
     request_id: UUID
     items: list[OrderLine] = Field(min_length=1, max_length=50)
@@ -892,7 +920,7 @@ class OrderInput(BaseModel):
 ORDER_NEXT_STATUS = {'Bekliyor':'Hazırlanıyor','Hazırlanıyor':'Dağıtımda','Dağıtımda':'Teslim edildi'}
 
 def order_dict(db, order_id):
-    row = db.execute('SELECT o.id,o.customer_id,c.name customer,o.amount_cents,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id WHERE o.id=?',(order_id,)).fetchone()
+    row = db.execute('SELECT o.id,o.customer_id,c.name customer,o.amount_cents,o.status,o.date,o.due_date,o.due_version FROM orders o JOIN customers c ON c.id=o.customer_id WHERE o.id=?',(order_id,)).fetchone()
     result = dict(row)
     result['amount'] = result.pop('amount_cents') / 100
     result['items'] = [dict(line) for line in db.execute('SELECT product_id,name,sku,quantity,price_cents FROM order_items WHERE order_id=? ORDER BY product_id',(order_id,))]
@@ -915,10 +943,10 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
         actor = db.execute('SELECT role,active FROM users WHERE id=?',(user['id'],)).fetchone()
         if not actor or not actor['active'] or actor['role'] not in ('admin','staff'):
             raise HTTPException(403, 'Bu işlem için yetkiniz yok.')
-        previous = db.execute('SELECT id,customer_id,created_by FROM orders WHERE request_id=?',(str(item.request_id),)).fetchone()
+        previous = db.execute('SELECT id,customer_id,created_by,due_date FROM orders WHERE request_id=?',(str(item.request_id),)).fetchone()
         if previous:
             lines = [(row['product_id'],row['quantity']) for row in db.execute('SELECT product_id,quantity FROM order_items WHERE order_id=? ORDER BY product_id',(previous['id'],))]
-            if previous['created_by']!=user['id'] or previous['customer_id']!=item.customer_id or lines!=sorted((line.product_id,line.quantity) for line in item.items):
+            if previous['due_date']!=(item.due_date.isoformat() if item.due_date else None) or previous['created_by']!=user['id'] or previous['customer_id']!=item.customer_id or lines!=sorted((line.product_id,line.quantity) for line in item.items):
                 raise HTTPException(409, 'Bu sipariş isteği daha önce farklı bilgilerle kullanılmış.')
             return order_dict(db,previous['id'])
         if not db.execute('SELECT 1 FROM customers WHERE id=?',(item.customer_id,)).fetchone():
@@ -932,7 +960,8 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
                 raise HTTPException(409, f"{product['name']} için stok yetersiz. Mevcut: {product['stock']} adet.")
             products.append((line,product))
         total = sum(line.quantity*product['price_cents'] for line,product in products)
-        cursor = db.execute('INSERT INTO orders(customer_id,amount_cents,status,date,request_id,created_by) VALUES(?,?,?,?,?,?)',(item.customer_id,total,'Bekliyor',today(),str(item.request_id),user['id']))
+        if item.due_date and item.due_date.isoformat()<today(): raise HTTPException(422,'Vade sipariş tarihinden önce olamaz.')
+        cursor = db.execute('INSERT INTO orders(customer_id,amount_cents,status,date,request_id,created_by,due_date) VALUES(?,?,?,?,?,?,?)',(item.customer_id,total,'Bekliyor',today(),str(item.request_id),user['id'],item.due_date.isoformat() if item.due_date else None))
         for line,product in products:
             db.execute('UPDATE products SET stock=stock-?,version=version+1 WHERE id=?',(line.quantity,line.product_id))
             record_stock_movement(db,product,product['stock'],product['stock']-line.quantity,'order',user['id'],order_id=cursor.lastrowid,note='Sipariş oluşturma')
@@ -1090,6 +1119,9 @@ def dashboard(user=Depends(auth.current_user)):
         sales = db.execute("SELECT COALESCE(SUM(amount_cents),0),COUNT(*) FROM orders WHERE date=? AND status!='İptal edildi'",(today(),)).fetchone()
         collected = db.execute('SELECT COALESCE(SUM(amount_cents),0) FROM collections p WHERE date=? AND NOT EXISTS(SELECT 1 FROM collection_cancellations x WHERE x.collection_id=p.id)',(today(),)).fetchone()[0]
         return {'date':today(),'sales':sales[0]/100,'orders':sales[1],'collections':collected/100,'customers':db.execute('SELECT COUNT(*) FROM customers').fetchone()[0], 'stock':db.execute('SELECT COALESCE(SUM(stock),0) FROM products').fetchone()[0], 'low_stock':[product_dict(row) for row in db.execute('SELECT * FROM products WHERE stock<=min_stock')], 'recent_orders':[dict(row) for row in db.execute('SELECT o.id,c.name customer,o.amount_cents/100.0 amount,o.status,o.date FROM orders o JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC LIMIT 5')]}
+
+purchasing.register(app,sys.modules[__name__])
+receivables.register(app,sys.modules[__name__])
 
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 if DIST.exists():

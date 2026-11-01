@@ -444,3 +444,23 @@ Her yeni kayıt istek kimliğiyle tekrar gönderimlere karşı korunur; aynı ki
 Aktarımlar **Giriş / Gider / Diğer çıkış** dönem toplamlarına dahil edilmez; aktarım giriş/çıkışı ayrıca gösterilir. Tahsilatlar ise hesaba gerçek giriş olarak gelir. **Gider kategorileri** tablosu seçili hesap/tarih aralığındaki iptal edilmemiş tüm giderleri (hareket sayfasından bağımsız) kategori, kayıt sayısı, tutar ve yüzde payıyla gösterir. İptaller, tahsilatlar ve aktarımlar gider raporuna girmez. Mevcut kategori metinleriyle gruplanır; büyük/küçük harfi farklı yazılan kategoriler ayrı gruplardır. Hesap bakiyeleri her zaman günceldir ve tarih filtresinden bağımsızdır.
 
 Manuel para girişleri müşteri borcunu değiştirmez. Tahsilat hesabı seçilmişse aynı parayı ayrıca manuel giriş olarak kaydetmeyin. Döviz, vergi/KDV, banka bağlantısı, tedarikçi borcu ve gider belgesi bu sürüme dahil değildir.
+
+## Tedarikçiler, alışlar ve tedarikçi ödemeleri
+
+Menüde **Tedarikçiler ve alışlar** açılır. Yönetici/personel tedarikçi ekleyip sürüm kontrollü düzenleyebilir; tüm roller borç ve geçmişi okuyabilir. Alışta tedarikçi, tarih, isteğe bağlı vade ve ürün/adet/birim alış tutarı girilir. Ürün başına tek satır, en fazla 50 ürün ve toplam 10.000.000 TL sınırı vardır. Alış Merkez stok ve tedarikçi borcunu tek işlemde artırır; stok hareketi oluşturur, satış fiyatını değiştirmez. Bu bir mal kabul/borç kaydıdır; resmî fatura veya vergi/KDV belgesi oluşturmaz.
+
+Tedarikçi ödemesinde mevcut kasa/banka hesabı seçilir; borç ve hesap çıkışı birlikte kaydedilir. Borçtan fazla ödeme tedarikçiden alacak olarak görünür. Ödeme, gider kategorisi raporuna girmez; diğer çıkış olarak gösterilir. Finans satırı ayrı iptal edilemez. Yönetici tedarikçi ekranından ödeme iptali yapınca borç/hesap birlikte geri alınır. Alış iptali stoktan geri çıkarır; Merkez stoğu yetmiyorsa işlem reddedilir. Alış iptali ödeme kaydını otomatik iptal etmez; varsa fazla ödeme alacak olarak kalır. Kayıtlar silinmez; gerekçeli iptal saklanır. Tekrarlanan istek kimliği ikinci kayıt üretmez. Alış ve ödeme geçmişleri ayrı 50 satırlık sayfalara ayrılır.
+
+## Vadeli alacaklar ve hatırlatma listesi
+
+**Vadeli alacaklar** ekranı açık siparişleri vadesi geçti, bugün vadeli, vadesi gelecek ve vade belirlenmedi gruplarıyla gösterir. Referans tarihi İstanbul'da bugündür; müşteri ve durum filtresi ile kalan toplam görülür. Müşteri telefonları varsa listede gösterilir; SMS/e-posta gönderilmez.
+
+Tahsilatlar müşterinin geçerli siparişlerine en eski sipariş tarihinden (aynı tarihte en küçük kayıt numarasından) başlayarak hesaplama sırasında paylaştırılır. Bu dağıtım sadece alacak listesi içindir; tahsilat belirli faturaya bağlanmış sayılmaz. Vadesiz eski siparişler de bu sıraya dahildir. İptaller dışlanır, avans/fazla tahsilat önce borcu kapatır. Mevcut borçlar yeni bir muhasebe kaydı oluşturulmadan okunur. Liste 50 satırlık sayfalara ayrılır.
+
+Yeni siparişte isteğe bağlı satış vadesi girilebilir; eski siparişe bu ekrandan vade belirlenebilir veya boş tarihle kaldırılabilir. Vade sipariş tarihinden önce olamaz. Vade değişimi sürüm kontrollüdür ve kullanıcı/zaman/eski-yeni tarih olay kaydında saklanır. Stok veya tutar değiştirmez.
+
+## Finans hareketlerini yazdırma / PDF ve Excel
+
+**Kasa, banka ve giderler → Hareketler ve dönem özeti** bölümünde filtreleri uyguladıktan sonra **Excel indir (.xlsx)** veya **Yazdır / PDF** seçilir. Çıktı yalnızca ekrandaki 50 satırı değil, uygulanmış hesap/tarih filtresindeki tüm hareketleri kapsar. İptal satırları görünür; dönem toplamlarına dahil edilmez. Hesap kartları tüm zamanların güncel bakiyelerini gösterir ve tarih filtresinden bağımsızdır.
+
+Excel dört sayfa içerir: Dönem Özeti, Hesaplar, Gider Kategorileri, Hareketler. Tutarlar sayısal hücredir; kullanıcı açıklamaları formül olarak çalıştırılmayan metin hücreleridir. Yazdırma görünümündeki düğmeyle tarayıcı yazdırma ekranı açılır; **PDF olarak kaydet** seçilebilir. Çıktı sayfaları oturum gerektirir, banka bağlantısı veya dış servise gönderim yapmaz.
