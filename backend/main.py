@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import purchasing
 import receivables
+import trade_reports
 import finance_export
 from decimal import Decimal
 from typing import Literal, Annotated
@@ -47,7 +48,7 @@ def backup_before_feature_migration():
         columns = {row[1] for row in source.execute('PRAGMA table_info(products)')}
         customer_columns = {row[1] for row in source.execute('PRAGMA table_info(customers)')}
         has_routes=source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_route_days'").fetchone()
-        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and {'due_date','due_version'} <= {row[1] for row in source.execute('PRAGMA table_info(orders)')} and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers','order_due_events',*purchasing.TABLES)) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
+        if not columns or ('return_stock' in columns and {'latitude','longitude'} <= customer_columns and {'due_date','due_version'} <= {row[1] for row in source.execute('PRAGMA table_info(orders)')} and has_routes and all(source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() for table in ('finance_accounts','finance_entries','finance_cancellations','collection_finance_links','finance_transfers','order_due_events','sale_cost_snapshots',*purchasing.TABLES)) and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_versions'").fetchone() and source.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_order_positions'").fetchone() and all({'note','reason'} <= {row[1] for row in source.execute(f'PRAGMA table_info({table})')} for table in ('customer_visits','customer_visit_events'))):
             return
         folder = path.parent / 'backups'
         folder.mkdir(exist_ok=True)
@@ -129,6 +130,7 @@ def initialize():
             CHECK(source_account_id!=target_account_id));''')
         purchasing.initialize(db)
         receivables.initialize(db)
+        trade_reports.initialize(db)
         for table in ('customer_visits','customer_visit_events'):
             visit_columns={row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
             for column in ('note','reason'):
@@ -965,7 +967,8 @@ def add_order(item: OrderInput, user=Depends(auth.writer)):
         for line,product in products:
             db.execute('UPDATE products SET stock=stock-?,version=version+1 WHERE id=?',(line.quantity,line.product_id))
             record_stock_movement(db,product,product['stock'],product['stock']-line.quantity,'order',user['id'],order_id=cursor.lastrowid,note='Sipariş oluşturma')
-            db.execute('INSERT INTO order_items(order_id,product_id,name,sku,quantity,price_cents) VALUES(?,?,?,?,?,?)',(cursor.lastrowid,line.product_id,product['name'],product['sku'],line.quantity,product['price_cents']))
+            order_line = db.execute('INSERT INTO order_items(order_id,product_id,name,sku,quantity,price_cents) VALUES(?,?,?,?,?,?)',(cursor.lastrowid,line.product_id,product['name'],product['sku'],line.quantity,product['price_cents']))
+            trade_reports.snapshot_cost(db,order_line.lastrowid,line.product_id,today())
         return order_dict(db,cursor.lastrowid)
 
 class CancellationInput(BaseModel):
@@ -1122,6 +1125,7 @@ def dashboard(user=Depends(auth.current_user)):
 
 purchasing.register(app,sys.modules[__name__])
 receivables.register(app,sys.modules[__name__])
+trade_reports.register(app,sys.modules[__name__])
 
 DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 if DIST.exists():
