@@ -18,6 +18,8 @@ test('panel, müşteri ve ürün ekleme; arama ve kalıcılık',async({page},inf
  await page.getByRole('textbox',{name:'Listede ara'}).fill('Örnek E2E '+info.project.name);
  await expect(page.locator('tbody tr')).toHaveCount(1);
  await page.reload();
+ await expect(page.getByRole('heading',{name:'Müşteriler.'})).toBeVisible();
+ await page.goto('/#dashboard');
  await page.getByRole('button',{name:'Yeni ürün',exact:true}).click();
  await page.getByLabel('Ürün adı').fill('Örnek E2E Ürün '+info.project.name);
  await page.getByLabel('Ürün kodu').fill('E2E-'+info.project.name+'-'+Date.now());
@@ -32,7 +34,7 @@ test('panel, müşteri ve ürün ekleme; arama ve kalıcılık',async({page},inf
  await expect(page.locator('tbody')).toContainText('42,75');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
  await page.reload();
- await page.getByRole('button',{name:'Tüm ürünleri görüntüle'}).click();
+ await expect(page.getByRole('heading',{name:'Ürünler ve stok.'})).toBeVisible();
  await expect(page.getByText('Örnek E2E Ürün '+info.project.name,{exact:true})).toBeVisible();
 });
 
@@ -50,7 +52,7 @@ test('salt okunur giriş, oturum kalıcılığı ve çıkış',async({page})=>{
  await page.getByRole('button',{name:'Müşterileri görüntüle',exact:true}).click();
  await expect(page.getByRole('button',{name:'Müşteri ekle',exact:true})).toHaveCount(0);
  await page.reload();
- await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Müşteriler.'})).toBeVisible();
  if(test.info().project.name==='mobile') await page.getByRole('button',{name:'Menüyü aç'}).click();
  await page.getByRole('button',{name:'Çıkış yap'}).click();
  await expect(page.getByRole('button',{name:'Giriş yap',exact:true})).toBeVisible();
@@ -331,4 +333,101 @@ test('stok girişi, hareket kaynakları, filtre ve kalıcılık',async({page},in
  await page.getByLabel('Ürüne göre filtrele',{exact:true}).selectOption('1');
  await expect(page.getByText(note,{exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+});
+
+
+test('kayıt bağlantıları, filtre kalıcılığı ve geri gezinme',async({page},info)=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await page.getByRole('button',{name:'Örnek Bahar Market',exact:true}).first().click();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.reload();
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.getByRole('button',{name:'Tüm siparişleri göster'}).click();
+ await expect(page).toHaveURL(/#orders$/);
+ await page.goBack();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ await page.goto('/#customers');
+ const customer=page.locator('tbody tr').filter({hasText:'Örnek Bahar Market'});
+ await customer.getByRole('button',{name:'Tahsilat ve bakiye',exact:true}).click();
+ await expect(page.getByLabel('Müşteriye göre filtrele',{exact:true})).toHaveValue('1');
+ await page.reload();
+ await expect(page.getByLabel('Müşteriye göre filtrele',{exact:true})).toHaveValue('1');
+ const me=await (await page.request.get('/api/auth/me')).json();
+ const created=await page.request.post('/api/orders',{headers:{'X-CSRF-Token':me.csrf},data:{customer_id:1,request_id:crypto.randomUUID(),items:[{product_id:1,quantity:1}]}});
+ expect(created.status()).toBe(201);
+ await page.goto('/#products');
+ const product=page.locator('tbody tr').filter({hasText:'DG-001'});
+ await product.getByRole('button',{name:'Stok hareketleri',exact:true}).click();
+ await expect(page.getByLabel('Ürüne göre filtrele',{exact:true})).toHaveValue('1');
+ await page.reload();
+ await expect(page.getByLabel('Ürüne göre filtrele',{exact:true})).toHaveValue('1');
+ const orderLink=page.getByRole('button',{name:/^DG-\d+$/}).first();
+ await orderLink.click();
+ await expect(page).toHaveURL(/#orders\?order=\d+$/);
+ await expect(page.locator('tbody tr')).toHaveCount(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
+ await page.screenshot({path:info.outputPath('linked-order.png'),fullPage:true});
+});
+
+
+test('doğrudan sipariş bağlantısında müşteri yükleme hatası ve tekrar deneme',async({page})=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await page.route('**/api/customers',r=>r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({detail:'Müşteri verisi yüklenemedi'})}));
+ await page.goto('/#orders?order=1');await page.reload();
+ await expect(page.getByRole('alert')).toContainText('Müşteri verisi yüklenemedi');
+ await expect(page.getByRole('button',{name:'Sipariş oluştur',exact:true})).toBeDisabled();
+ await page.unroute('**/api/customers');
+ await page.getByRole('button',{name:'Tekrar dene',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Sipariş oluştur',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Sipariş oluştur',exact:true}).click();
+ await expect(page.getByLabel('Müşteri',{exact:true}).locator('option')).toHaveCount(1+(await (await page.request.get('/api/customers')).json()).length);
+});
+
+test('tahsilat yanıtı beklenirken geri gezinme kaydı ve istek kimliğini korur',async({page},info)=>{
+ await page.goto('/');
+ await page.getByLabel('Kullanıcı adı',{exact:true}).fill('e2e-admin');
+ await page.getByLabel('Parola',{exact:true}).fill('E2E-only-password-42');
+ await page.getByRole('button',{name:'Giriş yap',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Genel bakış.'})).toBeVisible();
+ await page.goto('/#collections');
+ await page.getByLabel('Müşteriye göre filtrele',{exact:true}).selectOption('1');
+ let release!:()=>void,committed!:()=>void,handled!:()=>void;
+ const gate=new Promise<void>(r=>release=r),done=new Promise<void>(r=>committed=r),finished=new Promise<void>(r=>handled=r);
+ let requestId='';
+ await page.route('**/api/collections',async r=>{
+  if(r.request().method()!=='POST')return r.continue();
+  requestId=r.request().postDataJSON().request_id;
+  await r.fetch();committed();await gate;
+  try{await r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({detail:'Yanıt alınamadı; yeniden deneyin'})});}finally{handled();}
+ });
+ const note='Geri gezinme koruması '+info.project.name;
+ await page.getByRole('button',{name:'Tahsilat ekle',exact:true}).click();
+ await page.getByLabel('Tutar (₺)',{exact:true}).fill('12.34');
+ await page.getByLabel('Açıklama (isteğe bağlı)',{exact:true}).fill(note);
+ await page.getByRole('button',{name:'Tahsilatı kaydet',exact:true}).click();await done;
+ try{
+  await page.goBack();
+  await expect(page).toHaveURL(/#collections\?customer=1$/);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Kaydediliyor…',exact:true})).toBeDisabled();
+ }finally{release();await finished;}
+ await expect(page.getByRole('alert')).toContainText('Yanıt alınamadı');
+ await page.unroute('**/api/collections');
+ const retried=page.waitForRequest(r=>r.url().endsWith('/api/collections')&&r.method()==='POST');
+ await page.getByRole('button',{name:'Tahsilatı kaydet',exact:true}).click();
+ expect((await retried).postDataJSON().request_id).toBe(requestId);
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ const rows=await (await page.request.get('/api/collections')).json();
+ expect(rows.filter((c:{note:string})=>c.note===note)).toHaveLength(1);
+ await page.goto('/#orders');
+ await expect(page.getByRole('heading',{name:'Siparişler.'})).toBeVisible();
 });
